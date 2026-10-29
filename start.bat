@@ -11,4 +11,10 @@ if not exist node_modules (
   call npm install
   if errorlevel 1 ( pause & exit /b )
 )
+rem electron 44 doesn't download its exe during npm install, it grabs it on first use
+if not exist "node_modules\electron\dist\electron.exe" (
+  echo Downloading Electron. Takes a minute.
+  call node node_modules\electron\install.js
+  if errorlevel 1 ( pause & exit /b )
+)
 start "" "node_modules\electron\dist\electron.exe" .

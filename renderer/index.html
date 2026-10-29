@@ -1,0 +1,110 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; img-src 'self' data:; style-src 'self'">
+<title>Sample Shelf</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <div class="brand">sample shelf</div>
+  <div class="search">
+    <svg viewBox="0 0 24 24" width="16" height="16"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M20 20l-4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    <input id="q" type="text" spellcheck="false" autocomplete="off" placeholder="search names, folders, tags   (-word leaves it out)">
+    <button id="help" class="ghost" title="help">?</button>
+  </div>
+  <button id="foldersBtn" class="btn">folders</button>
+  <button id="scan" class="btn primary">scan</button>
+</header>
+
+<div id="filters">
+  <label class="check"><input type="checkbox" id="fLoop" checked><span>loops</span></label>
+  <label class="check"><input type="checkbox" id="fShot" checked><span>one-shots</span></label>
+  <div class="sep"></div>
+  <span class="lbl">key</span>
+  <div id="keyChips" class="chips"></div>
+  <button id="keyBtn" class="pill">+ key</button>
+  <div class="sep"></div>
+  <span class="lbl">bpm</span>
+  <input id="bpmMin" class="numbox" type="number" min="20" max="400" placeholder="min">
+  <span class="dash">–</span>
+  <input id="bpmMax" class="numbox" type="number" min="20" max="400" placeholder="max">
+  <button id="clearFilters" class="pill ghosty" hidden>clear filters</button>
+  <div class="grow"></div>
+  <label class="check"><input type="checkbox" id="autoplay"><span>auto-play</span></label>
+  <label class="check" title="loops play stretched to this tempo, pitch stays the same"><input type="checkbox" id="sync"><span>sync to</span></label>
+  <input id="syncBpm" class="numbox" type="number" min="20" max="400" value="120">
+  <span class="lbl">bpm</span>
+</div>
+<div id="bar"><div></div></div>
+
+<div id="keyPop" class="pop" hidden>
+  <div class="keygrid" id="keyGrid"></div>
+  <div class="poprow"><button id="keyNone" class="pill ghosty">any key</button></div>
+</div>
+
+<div id="foldersPop" class="pop" hidden>
+  <div class="poptitle">scan these folders</div>
+  <div id="rootList"></div>
+  <div class="poprow">
+    <button id="addRoot" class="pill">+ add folder</button>
+    <label class="check"><input type="checkbox" id="allDrives"><span>scan all drives instead</span></label>
+  </div>
+  <div class="divider"></div>
+  <div class="poptitle">wav copies go to</div>
+  <div class="poprow"><span id="libPath" class="path"></span><button id="changeLib" class="pill">change</button></div>
+  <div class="divider"></div>
+  <div class="poprow">
+    <button id="prune" class="pill">remove files not in these folders</button>
+    <button id="clearAll" class="pill danger">clear shelf</button>
+  </div>
+</div>
+
+<div id="helpbox" class="pop" hidden>
+  <div><code>kick</code> name, folder or tag has "kick"</div>
+  <div><code>-vocal</code> leave out anything with "vocal"</div>
+  <div><code>tag:dark</code> <code>ext:audioloop</code> <code>len:&lt;2</code> also work in the search box</div>
+  <div class="divider"></div>
+  <div>click plays (if auto-play is on) · space plays · arrows move</div>
+  <div>drag rows into studio one · ctrl/shift-click picks more than one</div>
+  <div>T tags selected · alt-click a tag removes it</div>
+  <div>double-click bpm or key to fix it · right-click for loop/one-shot, remove</div>
+  <div>delete removes selected from the shelf</div>
+</div>
+
+<main>
+  <div class="row head" id="head">
+    <div></div>
+    <div data-sort="name">name</div>
+    <div data-sort="bpm" class="num">bpm</div>
+    <div data-sort="key">key</div>
+    <div data-sort="duration" class="num">length</div>
+    <div data-sort="kind">type</div>
+    <div>tags</div>
+    <div data-sort="folder">folder</div>
+    <div data-sort="added">added</div>
+  </div>
+  <div id="list"><div id="spacer"></div></div>
+  <div id="empty" hidden>
+    <p id="emptyText">nothing on the shelf yet</p>
+    <button class="btn primary" id="emptyBtn">pick folders to scan</button>
+  </div>
+</main>
+
+<footer>
+  <div id="count"></div>
+  <div id="status"></div>
+  <div id="now"></div>
+</footer>
+
+<div id="tagger" hidden>
+  <input id="taginput" type="text" spellcheck="false" placeholder="add tags, comma between">
+</div>
+
+<script src="../lib/keys.js"></script>
+<script src="../lib/classify.js"></script>
+<script src="../node_modules/signalsmith-stretch/SignalsmithStretch.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
