@@ -2,6 +2,7 @@ const { app, BrowserWindow, ipcMain, dialog, shell, nativeImage, Menu } = requir
 const path = require('path');
 const fs = require('fs');
 const { Worker } = require('worker_threads');
+const K = require('./lib/keys');
 
 const DB_FILE = path.join(app.getPath('userData'), 'shelf.json');
 // hidden = scan folders that are unticked: their files stay on the shelf but don't show, and scans skip them
@@ -17,6 +18,24 @@ function load() {
   let first = Date.now();
   try { first = fs.statSync(DB_FILE).birthtimeMs || first; } catch {}
   for (const r of Object.values(db.files)) if (!r.added) r.added = first;
+  rereadKeys();
+}
+// keys from file/folder names get re-read every start, so parser fixes reach old records without a rescan.
+// a record whose only key came from a name the parser no longer believes gets detected again next scan
+function rereadKeys() {
+  for (const r of Object.values(db.files)) {
+    if (r.error || r.keySrc === 'tag' || r.keySrc === 'user') continue;
+    const fromName = K.keyFromName(r.name);
+    const k = fromName || K.keyFromFolder(r.folder);
+    if (k) {
+      // only the root came from the name: keep a detected scale if it was about the same root
+      if (k.scale || r.key !== k.root) r.scale = k.scale;
+      r.key = k.root;
+      r.keySrc = fromName ? 'name' : 'folder';
+    } else if (r.keySrc === 'name' || r.keySrc === 'folder') {
+      r.key = null; r.scale = null; r.keySrc = null; r.redetect = true;
+    }
+  }
 }
 let lastSave = Date.now();
 function save(now) {
@@ -40,6 +59,7 @@ function merge(rec) {
     rec.tags = prev.tags;
     rec.added = prev.added;
     if (prev.kindUser) rec.kindUser = prev.kindUser;
+    if (prev.xposeUser) rec.xposeUser = prev.xposeUser;
     if (prev.bpmSrc === 'user') { rec.bpm = prev.bpm; rec.bpmSrc = 'user'; }
     if (prev.keySrc === 'user') { rec.key = prev.key; rec.scale = prev.scale; rec.keySrc = 'user'; }
   }
@@ -147,8 +167,9 @@ ipcMain.handle('scan', async () => {
   const known = {};
   const hashList = [];
   for (const [id, r] of Object.entries(db.files)) {
-    known[id] = { path: r.path, size: r.size, mtime: r.mtime, error: r.error, wav: r.wav, qhash: r.qhash };
     if (r.qhash && r.wav && r.wav !== r.path) hashList.push([r.qhash, r.wav]);
+    if (r.redetect) continue; // not "known" = processed again (its wav copy is reused via hashList)
+    known[id] = { path: r.path, size: r.size, mtime: r.mtime, error: r.error, wav: r.wav, qhash: r.qhash };
   }
   worker = new Worker(path.join(__dirname, 'lib', 'worker.js'));
   worker.on('message', (m) => {
@@ -174,7 +195,7 @@ ipcMain.handle('stop-scan', async () => {
   return true;
 });
 
-// patch = { addTags?, removeTag?, bpm?, key?, scale?, kindUser? }
+// patch = { addTags?, removeTag?, bpm?, key?, scale?, kindUser?, xposeUser? }
 ipcMain.handle('update', (_e, ids, patch) => {
   const out = [];
   for (const id of ids) {
@@ -185,6 +206,7 @@ ipcMain.handle('update', (_e, ids, patch) => {
     if ('bpm' in patch) { r.bpm = patch.bpm; r.bpmSrc = patch.bpm ? 'user' : null; }
     if ('key' in patch) { r.key = patch.key; r.scale = patch.scale || null; r.keySrc = patch.key ? 'user' : null; }
     if ('kindUser' in patch) { if (patch.kindUser) r.kindUser = patch.kindUser; else delete r.kindUser; }
+    if ('xposeUser' in patch) { if (patch.xposeUser) r.xposeUser = patch.xposeUser; else delete r.xposeUser; }
     out.push(r);
   }
   save();
@@ -222,6 +244,10 @@ ipcMain.handle('context-menu', (_e, info) => new Promise((resolve) => {
     { label: n > 1 ? `mark ${n} as loop` : 'mark as loop', click: pick('loop') },
     { label: n > 1 ? `mark ${n} as one-shot` : 'mark as one-shot', click: pick('oneshot') },
     { label: 'let the app decide loop/one-shot', click: pick('autokind') },
+    { type: 'separator' },
+    { label: 'transpose with the key lock', click: pick('xposeOn') },
+    { label: 'never transpose', click: pick('xposeOff') },
+    { label: 'let the app decide transposing', click: pick('xposeAuto') },
     { type: 'separator' },
     { label: n > 1 ? `remove ${n} from shelf` : 'remove from shelf', click: pick('remove') },
   ]);

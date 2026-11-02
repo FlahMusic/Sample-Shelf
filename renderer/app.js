@@ -1,4 +1,4 @@
-/* global Keys, kindOf, SignalsmithStretch */
+/* global Keys, kindOf, isDrum, isVocal, SignalsmithStretch */
 const $ = (s) => document.querySelector(s);
 const ROW = 30;
 const PITCH_IDX = Object.fromEntries(Keys.PITCHES.map((p, i) => [p, i]));
@@ -15,7 +15,7 @@ const state = {
   scanning: false,
   settings: { roots: [], hidden: [], libDir: null },
   scanRoot: null, // folder the scan is in right now
-  prefs: { autoplay: true, sync: false, syncBpm: 120 },
+  prefs: { autoplay: true, sync: false, syncBpm: 120, lockKey: false, lockRoot: 'A', lockScale: 'minor' },
   filt: { loop: true, oneshot: true, keys: new Set(), bpmMin: null, bpmMax: null },
 };
 
@@ -75,8 +75,9 @@ function startDeck(r, buf, keepPos) {
   clearTimeout(idleTimer);
   if (ctx.state !== 'running') ctx.resume();
   const rate = rateFor(r);
-  // nothing to stretch: play the file as is. no stretcher colour, and it starts sooner
-  const plain = rate === 1;
+  const semis = semisFor(r);
+  // nothing to stretch or shift: play the file as is. no stretcher colour, and it starts sooner
+  const plain = rate === 1 && semis === 0;
   const t0 = ctx.currentTime + (plain ? 0.02 : lead);
   const loop = r._kind === 'loop';
   let input0 = 0;
@@ -101,14 +102,15 @@ function startDeck(r, buf, keepPos) {
     for (let c = 0; c < buf.numberOfChannels; c++) chans.push(buf.getChannelData(c));
     deck.node.dropBuffers();
     deck.node.addBuffers(chans);
-    deck.node.schedule({ active: true, input: input0, output: t0, rate, semitones: 0, loopStart: 0, loopEnd: loop ? buf.duration : 0 });
+    // vocals keep their formants when shifted, so they don't go chipmunk
+    deck.node.schedule({ active: true, input: input0, output: t0, rate, semitones: semis, formantCompensation: r._vocal, loopStart: 0, loopEnd: loop ? buf.duration : 0 });
   }
   const g = deck.gain.gain;
   g.cancelScheduledValues(0);
   g.setValueAtTime(0, ctx.currentTime);
   g.setValueAtTime(0, t0);
   g.linearRampToValueAtTime(1, t0 + 0.004);
-  live = { deck, src, buf, rec: r, t0, input0, rate, dur: buf.duration, loop };
+  live = { deck, src, buf, rec: r, t0, input0, rate, semis, dur: buf.duration, loop };
   if (!loop) {
     const p = live;
     p.timer = setTimeout(() => { if (live === p) stop(); }, (t0 - ctx.currentTime + (buf.duration - input0) / rate) * 1000 + 50);
@@ -217,6 +219,8 @@ function prep(r) {
   r._pl = r.path.toLowerCase();
   r._hay = `${r.name} ${r.folder} ${(r.tags || []).join(' ')}`.toLowerCase();
   r._kind = kindOf(r);
+  r._drum = isDrum(r);
+  r._vocal = isVocal(r);
 }
 
 function sortFn() {
@@ -290,7 +294,7 @@ function rowEl(i) {
   }
   return el;
 }
-const srcLabel = (s) => ({ auto: 'detected — could be off', name: 'from file name', tag: 'from file tags', user: 'set by you' }[s] || '');
+const srcLabel = (s) => ({ auto: 'detected — could be off', name: 'from file name', folder: 'from folder name', tag: 'from file tags', user: 'set by you' }[s] || '');
 
 function render() {
   const top = list.scrollTop;
@@ -314,9 +318,11 @@ function render() {
     c[2].textContent = fmtBpm(r.bpm);
     c[2].className = 'num bpm ' + (r.bpmSrc || '');
     c[2].title = srcLabel(r.bpmSrc);
-    c[3].textContent = fmtKey(r);
-    c[3].className = 'keyc ' + (r.keySrc || '');
-    c[3].title = srcLabel(r.keySrc);
+    const x = xposeFor(r);
+    c[3].textContent = x && x.semis ? `${fmtKey(r)} → ${fmtKey(x.to)} · ${fmtSemis(x.semis)}` : fmtKey(r);
+    c[3].className = 'keyc ' + (r.keySrc || '') + (x && x.semis ? ' shifted' : '');
+    c[3].title = srcLabel(r.keySrc) + (x ? '\n' + x.why : '');
+    if (x && x.badge) { const b = document.createElement('span'); b.className = 'badge'; b.textContent = x.badge; c[3].append(c[3].textContent ? ' ' : '', b); }
     c[4].textContent = fmtLen(r.duration);
     c[5].firstChild.textContent = r._kind === 'loop' ? 'loop' : 'one-shot';
     c[5].firstChild.className = r._kind;
@@ -357,8 +363,26 @@ function rateFor(r) {
   const rate = state.prefs.syncBpm / r.bpm;
   return rate >= 0.25 && rate <= 4 ? rate : 1;
 }
+// what the key lock does to a loop. one-shots aren't touched this round (pitched ones just show their note)
+function xposeFor(r) {
+  const p = state.prefs;
+  if (!p.lockKey || r._kind !== 'loop') return null;
+  if (r.xposeUser === 'off') return { badge: 'not shifted', why: 'you set this to never transpose' };
+  if (r._drum && r.xposeUser !== 'on') return { why: 'drums: tempo only, no transpose (right-click to change)' };
+  if (!r.key) return { badge: 'no key', why: 'no key known, so it plays as is' };
+  if (!r.scale) return { badge: 'no scale', why: 'major or minor not known, so it plays as is' };
+  const semis = Keys.lockShift(r.key, r.scale, p.lockRoot, p.lockScale);
+  const to = Keys.lockedKey(r.scale, p.lockRoot, p.lockScale);
+  return { semis, to: { key: to.root, scale: to.scale }, why: r.keySrc === 'auto' ? 'key was detected, so the shift is a guess' : '' };
+}
+function semisFor(r) { const x = xposeFor(r); return x && x.semis ? x.semis : 0; }
+const fmtSemis = (s) => (s > 0 ? '+' + s : s < 0 ? '−' + -s : '0');
 function nowText(r) {
-  $('#now').textContent = rateFor(r) !== 1 ? `▶ ${r.name}  ·  ${fmtBpm(r.bpm)} → ${state.prefs.syncBpm} bpm` : `▶ ${r.name}`;
+  const bits = [`▶ ${r.name}`];
+  if (rateFor(r) !== 1) bits.push(`${fmtBpm(r.bpm)} → ${state.prefs.syncBpm} bpm`);
+  const x = xposeFor(r);
+  if (x && x.semis) bits.push(`${fmtKey(r)} → ${fmtKey(x.to)}`);
+  $('#now').textContent = bits.join('  ·  ');
 }
 
 function stop() {
@@ -422,6 +446,10 @@ list.addEventListener('contextmenu', async (e) => {
   if (action === 'reveal') window.shelf.reveal(state.view[i].wav || state.view[i].path);
   else if (action === 'loop' || action === 'oneshot') { applyUpdates(await window.shelf.update(ids, { kindUser: action })); refilter(); }
   else if (action === 'autokind') { applyUpdates(await window.shelf.update(ids, { kindUser: null })); refilter(); }
+  else if (action === 'xposeOn' || action === 'xposeOff' || action === 'xposeAuto') {
+    applyUpdates(await window.shelf.update(ids, { xposeUser: action === 'xposeOn' ? 'on' : action === 'xposeOff' ? 'off' : null }));
+    retime();
+  }
   else if (action === 'remove') removeSelected();
 });
 
@@ -477,7 +505,7 @@ function editCell(r, cell) {
 function applyUpdates(recs) {
   for (const r of recs || []) {
     const cur = state.byId.get(r.id);
-    if (cur) { Object.assign(cur, r); if (!('kindUser' in r)) delete cur.kindUser; prep(cur); }
+    if (cur) { Object.assign(cur, r); if (!('kindUser' in r)) delete cur.kindUser; if (!('xposeUser' in r)) delete cur.xposeUser; prep(cur); }
   }
   render();
 }
@@ -577,7 +605,7 @@ $('#keyBtn').addEventListener('click', (e) => { e.stopPropagation(); togglePop($
 $('#foldersBtn').addEventListener('click', (e) => { e.stopPropagation(); renderFolders(); togglePop($('#foldersPop'), $('#foldersBtn')); });
 $('#help').addEventListener('click', (e) => { e.stopPropagation(); togglePop($('#helpbox'), $('#help')); });
 document.addEventListener('mousedown', (e) => {
-  if (!e.target.closest('.pop') && !e.target.closest('#keyBtn, #foldersBtn, #help')) document.querySelectorAll('.pop').forEach((p) => { p.hidden = true; });
+  if (!e.target.closest('.pop') && !e.target.closest('#keyBtn, #foldersBtn, #help, #lockKeyBtn')) document.querySelectorAll('.pop').forEach((p) => { p.hidden = true; });
 });
 
 $('#clearFilters').addEventListener('click', () => {
@@ -590,24 +618,54 @@ $('#clearFilters').addEventListener('click', () => {
 // ---------- preview settings ----------
 function savePrefs() { window.shelf.setPrefs(state.prefs); }
 $('#autoplay').addEventListener('change', (e) => { state.prefs.autoplay = e.target.checked; savePrefs(); });
-const lockTint = () => $('#lockBpm').classList.toggle('on', state.prefs.sync);
+const lockTint = () => {
+  $('#lockBpm').classList.toggle('on', state.prefs.sync);
+  $('#lockKeyBox').classList.toggle('on', state.prefs.lockKey);
+  $('#lockKeyBtn').textContent = fmtKey({ key: state.prefs.lockRoot, scale: state.prefs.lockScale });
+  document.body.classList.toggle('keylocked', state.prefs.lockKey);
+};
+function lockChanged() { lockTint(); savePrefs(); render(); retime(); }
+$('#lockKey').addEventListener('change', (e) => { state.prefs.lockKey = e.target.checked; lockChanged(); });
+// lock key picker: one key, picking one turns the lock on
+const lockGrid = $('#lockGrid');
+for (const scale of ['major', 'minor']) {
+  for (const root of Keys.PITCHES) {
+    const b = document.createElement('button');
+    b.textContent = keyLabel(root, scale);
+    b.addEventListener('click', () => {
+      Object.assign(state.prefs, { lockRoot: root, lockScale: scale, lockKey: true });
+      $('#lockKey').checked = true;
+      $('#lockKeyPop').hidden = true;
+      lockChanged();
+    });
+    lockGrid.appendChild(b);
+  }
+}
+$('#lockKeyBtn').addEventListener('click', (e) => {
+  e.stopPropagation();
+  lockGrid.querySelectorAll('button').forEach((b, i) => b.classList.toggle('on', Keys.PITCHES[i % 12] === state.prefs.lockRoot && (i < 12 ? 'major' : 'minor') === state.prefs.lockScale));
+  togglePop($('#lockKeyPop'), $('#lockKeyBtn'));
+});
 $('#sync').addEventListener('change', (e) => { state.prefs.sync = e.target.checked; lockTint(); savePrefs(); retime(); });
 $('#syncBpm').addEventListener('input', (e) => {
   const v = parseFloat(e.target.value);
   if (v >= 20 && v <= 400) { state.prefs.syncBpm = v; savePrefs(); retime(); }
 });
+// bpm or key lock changed: the playing loop follows without restarting
 function retime() {
   const r = state.playingId && state.byId.get(state.playingId);
-  if (r) nowText(r); // may still be loading; startDeck picks up the new rate then
-  if (!live || !live.loop || live.rec !== r) return; // one-shots always play at rate 1
+  if (r) nowText(r); // may still be loading; startDeck picks up the new settings then
+  if (!live || !live.loop || live.rec !== r) return; // one-shots always play as is
   const rate = rateFor(r);
-  if (rate === live.rate) return;
-  if (live.src || rate === 1) { startDeck(r, live.buf, true); return; } // plain <-> stretched
+  const semis = semisFor(r);
+  if (rate === live.rate && semis === live.semis) return;
+  if (live.src || (rate === 1 && semis === 0)) { startDeck(r, live.buf, true); return; } // plain <-> stretched
   const t = ctx.currentTime + lead;
   live.input0 = posAt(live, t);
   live.t0 = t;
   live.rate = rate;
-  live.deck.node.schedule({ rate, output: t });
+  live.semis = semis;
+  live.deck.node.schedule({ rate, semitones: semis, output: t });
 }
 
 // ---------- folders popover ----------
@@ -750,6 +808,7 @@ window.shelf.on('scan:done', (m) => {
   state.prefs = { ...state.prefs, ...(init.prefs || {}) };
   $('#autoplay').checked = state.prefs.autoplay;
   $('#sync').checked = state.prefs.sync;
+  $('#lockKey').checked = state.prefs.lockKey;
   lockTint();
   $('#syncBpm').value = state.prefs.syncBpm;
   state.all = init.records;

@@ -12,7 +12,8 @@ double-click `start.bat`. first run installs stuff (needs node.js from nodejs.or
 - same file in two places = converted once, shown once
 - conversion keeps sample rate, channels and bit depth. lossy files (mp3/ogg/aac) come out 24-bit
 - studio one .audioloop / .musicloop: audio gets pulled out of the loop file, tempo kept
-- bpm/key: file tags, then file name, then auto-detect. detected values show in italics, ones you set show bold pink
+- bpm/key: file tags, then file name, then (key only) folder name, then auto-detect. detected values show in italics, ones you set show bold pink
+- keys in names: `Am`, `F#m`, `C minor`, `Eb_Maj`, `KeyOfEm`, `Key of Bb`. a bare capital M isn't read as major (that's FM / AM synth names)
 - no auto-detect on files under 1.5s (one-shots)
 - rescans only touch new or changed files
 
@@ -26,6 +27,8 @@ loop vs one-shot: closest "loop" / "one shot" / "hit" word in the name or folder
 
 ## preview
 auto-play: clicking or arrowing to a sample plays it. loops loop, one-shots play once. sync to ___ bpm: loops play stretched to that tempo, pitch stays (signalsmith stretch). arrowing to the next loop while one plays picks up on the same beat.
+
+lock key: loops play moved to that key. minor loops go to the key, major loops to its relative major (lock E min: A min → E min, C maj → G maj). always the smallest move, never more than 6 semitones. tempo and key change in one pass. drums only get the tempo. vocals keep their formants. loops with no key, or no major/minor, play as is with a badge. a detected key still gets moved, but it's a guess (italic). right-click: transpose / never transpose / let the app decide.
 
 ## cleanup
 folders → "remove files not in these folders" drops everything outside your scan folders (unticked ones still count as yours). "clear shelf" wipes everything. select rows + delete removes those. removing only ever deletes the wav copies this app made, never your originals. sort by "added" to grab a batch.

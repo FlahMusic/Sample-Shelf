@@ -38,12 +38,20 @@
     <input id="syncBpm" class="numbox" type="number" min="20" max="400" value="120">
     <span class="lbl">bpm</span>
   </div>
+  <div id="lockKeyBox" class="lock">
+    <label class="check" title="loops get moved to this key. minor loops to the key, major loops to its relative major. drums aren't touched"><input type="checkbox" id="lockKey"><span>lock key</span></label>
+    <button id="lockKeyBtn" class="pill">A min</button>
+  </div>
 </div>
 <div id="bar"><div></div></div>
 
 <div id="keyPop" class="pop" hidden>
   <div class="keygrid" id="keyGrid"></div>
   <div class="poprow"><button id="keyNone" class="pill ghosty">any key</button></div>
+</div>
+
+<div id="lockKeyPop" class="pop" hidden>
+  <div class="keygrid" id="lockGrid"></div>
 </div>
 
 <div id="foldersPop" class="pop" hidden>
@@ -74,6 +82,9 @@
   <div>T tags selected · alt-click a tag removes it</div>
   <div>double-click bpm or key to fix it · right-click for loop/one-shot, remove</div>
   <div>delete removes selected from the shelf</div>
+  <div class="divider"></div>
+  <div>lock key: loops play moved to that key (minor ones to it, major ones to its relative major). drums only get the tempo</div>
+  <div>right-click a loop to always or never transpose it</div>
   <div class="divider"></div>
   <div class="popsub">italic = detected, could be off · bold pink = set by you</div>
 </div>

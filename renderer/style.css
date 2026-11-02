@@ -189,6 +189,11 @@ main {
 /* guesses vs facts: detected values italic + soft, ones you set bold */
 .auto { color: var(--soft); font-style: italic; }
 .user { color: var(--user); font-weight: 700; }
+/* key lock on: key column gets room for "A min → E min · −5" */
+body.keylocked { --cols: 30px minmax(200px, 2fr) 62px 158px 62px 84px minmax(90px, 1fr) minmax(120px, 1.3fr) 96px; }
+.keyc.shifted { color: var(--play); }
+.keyc.shifted.auto { color: var(--play); }
+.badge { display: inline-block; font-size: 11px; font-weight: 700; font-style: normal; padding: 0 7px; border-radius: 999px; background: var(--yellow); color: var(--ink); }
 .folder { color: var(--soft); direction: rtl; text-align: left; }
 .added { color: var(--soft); font-size: 12.5px; }
 .kind > span { display: inline-block; font-size: 12px; font-weight: 600; padding: 1px 9px; border-radius: 999px; }

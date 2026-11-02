@@ -199,6 +199,24 @@ short form of q1–q31 from the grilling rounds:
 - folders: `db.hidden` = unticked roots. the most specific root wins (an unticked subfolder inside a ticked one stays hidden). status strip: "x shown · y on the shelf · z in unticked folders", deduped by qhash. tested in a throwaway profile (`--user-data-dir` works in electron 44).
 - test gotcha: bash heredocs on this machine collapse `\\` to `\`. write page scripts that contain windows paths with the file tool, not a heredoc.
 
+## pass 3 status (2026-11-02): key lock built and tone-tested, list view
+- **name parser was mostly wrong.** of 321 keys read from names, 258 were "FM Brass" / "AM Sequences" read as F/A major via a bare capital "M". now: no bare "M"; single "m" only right after an uppercase letter; `[\s_-]` allowed before maj/min words; "KeyOfEm" / "Key of Bb" (no suffix = major). 16 hand cases pass.
+- **folder keys added** (nearest 3 folders, source `folder`). where name and folder both have a key they agree 184/184 on his shelf.
+- `rereadKeys()` in main re-reads name/folder keys on every start, so parser fixes reach old records without a rescan. records that lose a false name key get `redetect` and are processed again on the next scan (their wav copy is reused). dry run on his db: 258 cleared + redetect, 339 auto→name, 170 auto→folder, 525 none→name/folder (mostly one-shot notes).
+- **auto key accuracy, measured** on 479 of his loops whose names/folders state the key: the lock shift is right (exact or relative) **53%** of the time with essentia's default `bgate` profile. other profiles: shaath 52, braw 51, edma/temperley/krumhansl 49, diatonic 48, edmm 42. so the profile stays. caveat: 462 of the 479 are bass loops; only 17 others, too few to judge.
+- drum words (`classify.js isDrum`): drum, perc, hat, kick, snare, clap, cymbal, ride, crash, tom, shaker, conga, bongo, tambourine. **not** break / groove / fill / beat: on his shelf those are mostly bass loop section names. pitched words win when closer (closest decisive word, like `kindOf`). 1,061 of 7,493 loops come out as drums, none with bass/KeyOf in the path. edge case: "Percussion-Hybrid-Mallet Maker" (pitched) reads as drums; right-click fixes it.
+- lock maths in `keys.js` (`lockShift`, `lockedKey`): 11 cases checked. tone tests in the real engine: A min → E min, C maj → G maj, drums untouched (plain), lock + bpm in one pass, lock toggles follow a playing loop with no restart, overrides, vocal `formantCompensation` passed.
+- per-file override `xposeUser: 'on'|'off'` (right-click), kept across rescans (tested with a changed file in a throwaway profile).
+- **signalsmith pitch accuracy problem (unresolved, flah's call):** offline renders of tones, spectral peak measured (goertzel, agrees with zero-crossings within 0.2 cents):
+  - buffer mode (what we use) adds a near-constant +0.45 Hz even with no shift: +14.5 cents at 55 Hz, +7 at 110, +4 at 196, +1.5 at 440. live-input mode at 0 shift is exact, so this comes from the web wrapper calling `seek()` every 128-sample quantum.
+  - the shift itself is off at low pitch even in live mode (+15 to +22 cents at 110–196 Hz for −5/−6). cause in the C++: peaks are moved by a whole-band offset taken from an energy-weighted band centre (`findPeaks` / `updateOutputMap`), so coarse bins bias low notes.
+  - harmonic-rich bass (12-harmonic saw) shows the same: 7–15 cents.
+  - tried: 128-aligned block/interval (no better), longer blocks (worse), varispeed + live-mode correction (better for key shifts, worse for tempo-only lows). none fixes it.
+  - rubberband R2 via ffmpeg (offline only): within ~2 cents except 55 → 41 Hz (−31.5).
+  - npm 1.3.2 is the latest release.
+- shelf has 1,695 `._*` macOS AppleDouble files as unreadable records ("Invalid data found"). not audio. not fixed: flah to decide (suggest the scan skips `._*`).
+- csp note: an `OfflineAudioContext` render needs `SignalsmithStretch.moduleUrl` set first (`engine()` does it), or the worklet tries `blob:` and the csp blocks it. pass 4 must call `engine()` (or set the url) before rendering.
+
 ## suggested passes (one at a time, check in with flah after each)
 1. signalsmith engine swap in the existing list view (section 1)
 2. new look + folders popover + status strip (section 0). early, so everything after is built in the new style
