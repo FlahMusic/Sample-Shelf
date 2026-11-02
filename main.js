@@ -4,13 +4,15 @@ const fs = require('fs');
 const { Worker } = require('worker_threads');
 
 const DB_FILE = path.join(app.getPath('userData'), 'shelf.json');
-let db = { libDir: null, roots: [], allDrives: false, prefs: { autoplay: true, sync: false, syncBpm: 120 }, files: {} };
+// hidden = scan folders that are unticked: their files stay on the shelf but don't show, and scans skip them
+let db = { libDir: null, roots: [], hidden: [], prefs: { autoplay: true, sync: false, syncBpm: 120 }, files: {} };
 let win = null;
 let worker = null;
 let saveTimer = null;
 
 function load() {
   try { db = Object.assign(db, JSON.parse(fs.readFileSync(DB_FILE, 'utf8'))); } catch {}
+  delete db.allDrives; // gone: add a drive as a folder instead
   // entries from before "added" existed: stamp them with when the shelf was first made
   let first = Date.now();
   try { first = fs.statSync(DB_FILE).birthtimeMs || first; } catch {}
@@ -100,7 +102,7 @@ async function confirm(message, detail, okLabel) {
 function createWindow() {
   win = new BrowserWindow({
     width: 1320, height: 820, minWidth: 900, minHeight: 460,
-    backgroundColor: '#14161a',
+    backgroundColor: '#f1e9fb',
     title: 'Sample Shelf',
     autoHideMenuBar: true,
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, sandbox: true },
@@ -108,7 +110,7 @@ function createWindow() {
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
 }
 
-const settings = () => ({ libDir: db.libDir, roots: db.roots, allDrives: db.allDrives, prefs: db.prefs });
+const settings = () => ({ libDir: db.libDir, roots: db.roots, hidden: db.hidden, prefs: db.prefs });
 
 ipcMain.handle('init', () => ({ ...settings(), records: Object.values(db.files), scanning: !!worker }));
 ipcMain.handle('pick-lib', () => pickLib());
@@ -116,18 +118,31 @@ ipcMain.handle('set-prefs', (_e, prefs) => { db.prefs = { ...db.prefs, ...prefs 
 
 ipcMain.handle('add-root', async () => {
   const r = await dialog.showOpenDialog(win, { title: 'add a folder to scan', properties: ['openDirectory', 'multiSelections'] });
-  if (!r.canceled) for (const f of r.filePaths) if (!db.roots.includes(f)) db.roots.push(f);
+  if (!r.canceled) for (const f of r.filePaths) {
+    if (!db.roots.includes(f)) db.roots.push(f);
+    db.hidden = db.hidden.filter((x) => x !== f);
+  }
   save(true);
   return settings();
 });
-ipcMain.handle('remove-root', (_e, root) => { db.roots = db.roots.filter((x) => x !== root); save(true); return settings(); });
-ipcMain.handle('set-all-drives', (_e, on) => { db.allDrives = !!on; save(true); return settings(); });
+// removing a folder takes its files off the shelf too (unless another folder still holds them)
+ipcMain.handle('remove-root', async (_e, root) => {
+  const rest = db.roots.filter((x) => x !== root);
+  const ids = Object.values(db.files).filter((r) => under(r.path, root) && !rest.some((o) => under(r.path, o))).map((r) => r.id);
+  if (ids.length && !(await confirm(`remove ${root} and its ${ids.length.toLocaleString()} files from the shelf?`, 'the wav copies made for them get deleted too. your original files stay where they are.', 'remove'))) return null;
+  db.roots = rest;
+  db.hidden = db.hidden.filter((x) => x !== root);
+  let res = { removed: [], deleted: 0 };
+  if (ids.length) res = drop(ids); else save(true);
+  return { settings: settings(), res };
+});
+ipcMain.handle('set-hidden', (_e, hidden) => { db.hidden = hidden.filter((x) => db.roots.includes(x)); save(true); return settings(); });
 
 ipcMain.handle('scan', async () => {
   if (worker) return { ok: false, why: 'already scanning' };
-  let roots = db.allDrives ? null : db.roots;
+  let roots = db.roots.filter((x) => !db.hidden.includes(x));
   if (process.env.SHELF_ROOTS) roots = process.env.SHELF_ROOTS.split(';'); // dev/testing only
-  if (roots && !roots.length) return { ok: false, why: 'pick a folder to scan first', needRoots: true };
+  if (!roots.length) return { ok: false, why: db.roots.length ? 'tick a folder to scan' : 'pick a folder to scan first', needRoots: true };
   if (!db.libDir && !(await pickLib())) return { ok: false, why: 'no library folder' };
   const known = {};
   const hashList = [];
@@ -183,7 +198,7 @@ ipcMain.handle('remove', async (_e, ids) => {
 });
 
 ipcMain.handle('prune', async () => {
-  if (db.allDrives) return { removed: [], deleted: 0, why: 'scanning all drives, nothing is outside' };
+  if (!db.roots.length) return { removed: [], deleted: 0, why: 'add a folder first' };
   const ids = Object.values(db.files).filter((r) => !db.roots.some((root) => under(r.path, root))).map((r) => r.id);
   if (!ids.length) return { removed: [], deleted: 0 };
   const ok = await confirm(`remove ${ids.length} files that aren't in your scan folders?`, 'their wav copies get deleted too. originals stay where they are.', 'remove');

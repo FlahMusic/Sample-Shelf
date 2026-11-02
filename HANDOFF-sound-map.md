@@ -182,6 +182,23 @@ rules:
 - the stretcher isn't transparent at rate 1 (kick attack peak −1 dB, ~40 ms extra tail). if flah hears it on one-shots, bypass it when rate 1 + 0 st.
 - how it was tested: launch `electron.exe . --remote-debugging-port=9333`, run page scripts over CDP `Runtime.evaluate` (app.js top-level `let`s like `live`, `decks`, `ctx` are reachable), capture deck output through a ScriptProcessor into a muted gain. note: an occluded window gets 1 s timer throttling, which wrecks timing tests; bring the window to front.
 
+## decisions from flah (2026-11-02, all suggested answers accepted)
+short form of q1–q31 from the grilling rounds:
+- engine: keep signalsmith default preset (pending his ear test). bypass the stretcher at rate 1 with no transpose (done). full-song start delay ok for now. in-time swap only with sync on.
+- look: light pastel only. name stays "sample shelf". his art: `slimelogo.png` in the header, `minis/violet.png` on the empty screen (copied into `renderer/art/`). colours as section 0 suggests.
+- folders: untick = hide, scans skip it, cleanup treats unticked as still his. trash = remove the folder and its files (confirm). "scan all drives" dropped (add `C:\` as a folder). wav-copies path, prune and clear shelf sit quietly under the big add button.
+- header: no list|map toggle until pass 5.
+- key lock: drums never transpose (right-click override). pitched one-shots show the note only (italic, "note" label), no tuning yet. exact mode. fix "KeyOfEm"-style name parsing in pass 3.
+- drag-out: locked copies as 32-bit float wavs (the stretcher overshoots 0 dBFS slightly).
+- map: plain drag = sweep (plays everything it passes, newest cuts the last), ctrl+drag a dot = drag-out. up/down = similar (shift = 5), left/right = history. circles on the map only. "only matching key" default off. links are bpm-only while key-locked. bpm tolerance 6% + half/double time.
+- later: midi-clock tempo last and optional. no step sequencer. pass order as below.
+
+## pass 2 status (2026-11-02): built, screenshot-checked, not yet seen by flah
+- stretcher bypass: plain `AudioBufferSourceNode` on the same deck when rate is 1. one-shots start in ~19 ms (was ~70), kick attack exact. switching plain ↔ stretched mid-loop (sync tick) stays on the beat. plain → stretched in-time swap within ±5 ms.
+- look: quicksand bundled (`renderer/fonts/`, OFL.txt alongside, unicode ranges copied from google fonts' css). slimehedron tokens in `style.css`. **`--ink-soft` fails 4.5:1 on most pastels** (2.6–4.4), so secondary text uses `--soft: #63548b` (worst case 4.76, 6.3 on the list sheet). every text/surface pair checked with alpha compositing. still lower contrast than the old dark ui's dim text (~10:1), but passes AA everywhere.
+- folders: `db.hidden` = unticked roots. the most specific root wins (an unticked subfolder inside a ticked one stays hidden). status strip: "x shown · y on the shelf · z in unticked folders", deduped by qhash. tested in a throwaway profile (`--user-data-dir` works in electron 44).
+- test gotcha: bash heredocs on this machine collapse `\\` to `\`. write page scripts that contain windows paths with the file tool, not a heredoc.
+
 ## suggested passes (one at a time, check in with flah after each)
 1. signalsmith engine swap in the existing list view (section 1)
 2. new look + folders popover + status strip (section 0). early, so everything after is built in the new style

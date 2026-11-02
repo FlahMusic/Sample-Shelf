@@ -8,9 +8,9 @@
 </head>
 <body>
 <header>
-  <div class="brand">sample shelf</div>
+  <div class="brand"><img src="art/slimelogo.png" alt="">sample shelf</div>
   <div class="search">
-    <svg viewBox="0 0 24 24" width="16" height="16"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M20 20l-4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    <svg viewBox="0 0 24 24" width="16" height="16"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2.2"/><path d="M20 20l-4-4" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
     <input id="q" type="text" spellcheck="false" autocomplete="off" placeholder="search names, folders, tags   (-word leaves it out)">
     <button id="help" class="ghost" title="help">?</button>
   </div>
@@ -33,9 +33,11 @@
   <button id="clearFilters" class="pill ghosty" hidden>clear filters</button>
   <div class="grow"></div>
   <label class="check"><input type="checkbox" id="autoplay"><span>auto-play</span></label>
-  <label class="check" title="loops play stretched to this tempo, pitch stays the same"><input type="checkbox" id="sync"><span>sync to</span></label>
-  <input id="syncBpm" class="numbox" type="number" min="20" max="400" value="120">
-  <span class="lbl">bpm</span>
+  <div id="lockBpm" class="lock">
+    <label class="check" title="loops play stretched to this tempo, pitch stays the same"><input type="checkbox" id="sync"><span>sync to</span></label>
+    <input id="syncBpm" class="numbox" type="number" min="20" max="400" value="120">
+    <span class="lbl">bpm</span>
+  </div>
 </div>
 <div id="bar"><div></div></div>
 
@@ -45,32 +47,35 @@
 </div>
 
 <div id="foldersPop" class="pop" hidden>
-  <div class="poptitle">scan these folders</div>
-  <div id="rootList"></div>
-  <div class="poprow">
-    <button id="addRoot" class="pill">+ add folder</button>
-    <label class="check"><input type="checkbox" id="allDrives"><span>scan all drives instead</span></label>
+  <div class="pophead">
+    <div class="poptitle">folders</div>
+    <button id="enableAll" class="pill">enable all</button>
   </div>
+  <div id="rootList"></div>
+  <button id="addRoot" class="btn primary big">add folder or drive</button>
   <div class="divider"></div>
-  <div class="poptitle">wav copies go to</div>
-  <div class="poprow"><span id="libPath" class="path"></span><button id="changeLib" class="pill">change</button></div>
-  <div class="divider"></div>
-  <div class="poprow">
-    <button id="prune" class="pill">remove files not in these folders</button>
-    <button id="clearAll" class="pill danger">clear shelf</button>
+  <div class="quiet">
+    <div class="poprow"><span class="popsub">wav copies go to</span><span id="libPath" class="path"></span><button id="changeLib" class="pill">change</button></div>
+    <div class="poprow">
+      <button id="prune" class="pill">remove files not in these folders</button>
+      <button id="clearAll" class="pill danger">clear shelf</button>
+    </div>
   </div>
 </div>
 
 <div id="helpbox" class="pop" hidden>
+  <div class="poptitle">help</div>
   <div><code>kick</code> name, folder or tag has "kick"</div>
   <div><code>-vocal</code> leave out anything with "vocal"</div>
-  <div><code>tag:dark</code> <code>ext:audioloop</code> <code>len:&lt;2</code> also work in the search box</div>
+  <div><code>bpm:120-128</code> <code>key:Am</code> <code>tag:dark</code> <code>ext:audioloop</code> <code>len:&lt;2</code></div>
   <div class="divider"></div>
   <div>click plays (if auto-play is on) · space plays · arrows move</div>
-  <div>drag rows into studio one · ctrl/shift-click picks more than one</div>
+  <div>drag rows into studio pro · ctrl/shift-click picks more than one</div>
   <div>T tags selected · alt-click a tag removes it</div>
   <div>double-click bpm or key to fix it · right-click for loop/one-shot, remove</div>
   <div>delete removes selected from the shelf</div>
+  <div class="divider"></div>
+  <div class="popsub">italic = detected, could be off · bold pink = set by you</div>
 </div>
 
 <main>
@@ -87,6 +92,7 @@
   </div>
   <div id="list"><div id="spacer"></div></div>
   <div id="empty" hidden>
+    <img src="art/slime-violet.png" alt="">
     <p id="emptyText">nothing on the shelf yet</p>
     <button class="btn primary" id="emptyBtn">pick folders to scan</button>
   </div>

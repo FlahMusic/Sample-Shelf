@@ -6,12 +6,13 @@ finds every audio file on your drives, converts anything that isn't a wav into a
 double-click `start.bat`. first run installs stuff (needs node.js from nodejs.org).
 
 ## what it does
-- scans the folders you pick under **folders** (or tick "scan all drives instead"; skips Windows, recycle bin, system folders)
+- scans the folders you pick under **folders**. add a whole drive (like `D:\`) to scan all of it. skips Windows, recycle bin, system folders
+- untick a folder to hide its files (nothing gets deleted, scans skip it). tick it again and they're back. the trash icon takes the folder and its files off the shelf
 - plain wavs stay where they are. everything else gets converted into the library folder you pick
 - same file in two places = converted once, shown once
 - conversion keeps sample rate, channels and bit depth. lossy files (mp3/ogg/aac) come out 24-bit
 - studio one .audioloop / .musicloop: audio gets pulled out of the loop file, tempo kept
-- bpm/key: file tags, then file name, then auto-detect. auto values show dim, ones you set show orange
+- bpm/key: file tags, then file name, then auto-detect. detected values show in italics, ones you set show bold pink
 - no auto-detect on files under 1.5s (one-shots)
 - rescans only touch new or changed files
 
@@ -27,7 +28,7 @@ loop vs one-shot: closest "loop" / "one shot" / "hit" word in the name or folder
 auto-play: clicking or arrowing to a sample plays it. loops loop, one-shots play once. sync to ___ bpm: loops play stretched to that tempo, pitch stays (signalsmith stretch). arrowing to the next loop while one plays picks up on the same beat.
 
 ## cleanup
-folders → "remove files not in these folders" drops everything outside your scan folders. "clear shelf" wipes everything. select rows + delete removes those. removing only ever deletes the wav copies this app made, never your originals. sort by "added" to grab a batch.
+folders → "remove files not in these folders" drops everything outside your scan folders (unticked ones still count as yours). "clear shelf" wipes everything. select rows + delete removes those. removing only ever deletes the wav copies this app made, never your originals. sort by "added" to grab a batch.
 
 ## search
 `kick` `-vocal` `bpm:120` `bpm:120-128` `bpm:>140` `key:Am` `key:F#` `scale:minor` `tag:dark` `ext:audioloop` `len:<2`

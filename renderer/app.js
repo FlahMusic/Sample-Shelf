@@ -13,7 +13,8 @@ const state = {
   cursor: -1,
   playingId: null,
   scanning: false,
-  settings: { roots: [], allDrives: false, libDir: null },
+  settings: { roots: [], hidden: [], libDir: null },
+  scanRoot: null, // folder the scan is in right now
   prefs: { autoplay: true, sync: false, syncBpm: 120 },
   filt: { loop: true, oneshot: true, keys: new Set(), bpmMin: null, bpmMax: null },
 };
@@ -65,38 +66,52 @@ function fadeOut(p, t) {
   g.cancelScheduledValues(t);
   g.setValueAtTime(g.value, t);
   g.linearRampToValueAtTime(0, t + FADE);
-  p.deck.node.schedule({ active: false, output: t + FADE });
+  if (p.src) p.src.stop(t + FADE);
+  else p.deck.node.schedule({ active: false, output: t + FADE });
 }
 
-function startDeck(r, buf) {
+// keepPos: same file carries on from where it is (used when switching between plain and stretched)
+function startDeck(r, buf, keepPos) {
   clearTimeout(idleTimer);
   if (ctx.state !== 'running') ctx.resume();
-  const t0 = ctx.currentTime + lead;
   const rate = rateFor(r);
+  // nothing to stretch: play the file as is. no stretcher colour, and it starts sooner
+  const plain = rate === 1;
+  const t0 = ctx.currentTime + (plain ? 0.02 : lead);
   const loop = r._kind === 'loop';
   let input0 = 0;
+  if (keepPos && live) input0 = posAt(live, t0);
   // in-time swap: with bpm sync on, the next loop picks up on the same beat the last one was on
-  if (live && live.loop && loop && state.prefs.sync && live.rec.bpm && r.bpm) {
+  else if (live && live.loop && loop && state.prefs.sync && live.rec.bpm && r.bpm) {
     const beats = posAt(live, t0) * live.rec.bpm / 60;
     const newBeats = buf.duration * r.bpm / 60;
     input0 = (beats % newBeats) * 60 / r.bpm;
   }
   const deck = live && live.deck === decks[0] ? decks[1] : decks[0];
   if (live) fadeOut(live, t0);
-  const chans = [];
-  for (let c = 0; c < buf.numberOfChannels; c++) chans.push(buf.getChannelData(c));
-  deck.node.dropBuffers();
-  deck.node.addBuffers(chans);
-  deck.node.schedule({ active: true, input: input0, output: t0, rate, semitones: 0, loopStart: 0, loopEnd: loop ? buf.duration : 0 });
+  let src = null;
+  if (plain) {
+    src = ctx.createBufferSource();
+    src.buffer = buf;
+    src.loop = loop;
+    src.connect(deck.gain);
+    src.start(t0, input0);
+  } else {
+    const chans = [];
+    for (let c = 0; c < buf.numberOfChannels; c++) chans.push(buf.getChannelData(c));
+    deck.node.dropBuffers();
+    deck.node.addBuffers(chans);
+    deck.node.schedule({ active: true, input: input0, output: t0, rate, semitones: 0, loopStart: 0, loopEnd: loop ? buf.duration : 0 });
+  }
   const g = deck.gain.gain;
   g.cancelScheduledValues(0);
   g.setValueAtTime(0, ctx.currentTime);
   g.setValueAtTime(0, t0);
   g.linearRampToValueAtTime(1, t0 + 0.004);
-  live = { deck, rec: r, t0, input0, rate, dur: buf.duration, loop };
+  live = { deck, src, buf, rec: r, t0, input0, rate, dur: buf.duration, loop };
   if (!loop) {
     const p = live;
-    p.timer = setTimeout(() => { if (live === p) stop(); }, (lead + buf.duration / rate) * 1000 + 50);
+    p.timer = setTimeout(() => { if (live === p) stop(); }, (t0 - ctx.currentTime + (buf.duration - input0) / rate) * 1000 + 50);
   }
 }
 
@@ -155,8 +170,23 @@ function keyTest(raw) {
   return (r) => r.key === root && (!scale || r.scale === scale);
 }
 
+// most specific folder wins: an unticked folder inside a ticked one stays hidden, and the other way round
+const rootPrefix = (root) => { const l = root.toLowerCase(); return /[\\/]$/.test(l) ? l : l + '\\'; };
+function rootMatcher() {
+  const list = state.settings.roots.map((root) => [rootPrefix(root), root]).sort((a, b) => b[0].length - a[0].length);
+  return (p) => { for (const [pre, root] of list) if (p.startsWith(pre)) return root; return null; };
+}
+function hiddenTest() {
+  if (!state.settings.hidden.length) return null;
+  const match = rootMatcher();
+  const off = new Set(state.settings.hidden);
+  return (r) => off.has(match(r._pl));
+}
+
 function buildFilter() {
   const tests = [];
+  const hid = hiddenTest();
+  if (hid) tests.push((r) => !hid(r));
   const f = state.filt;
   // checkboxes: both on or both off = everything
   if (f.loop !== f.oneshot) { const want = f.loop ? 'loop' : 'oneshot'; tests.push((r) => r._kind === want); }
@@ -184,6 +214,7 @@ function buildFilter() {
 }
 
 function prep(r) {
+  r._pl = r.path.toLowerCase();
   r._hay = `${r.name} ${r.folder} ${(r.tags || []).join(' ')}`.toLowerCase();
   r._kind = kindOf(r);
 }
@@ -232,7 +263,16 @@ function refilter() {
   $('#clearFilters').hidden = !(fl.loop !== fl.oneshot || fl.keys.size || fl.bpmMin != null || fl.bpmMax != null);
   render();
   const v = state.view.length;
-  $('#count').textContent = `${n(v)} sample${v === 1 ? '' : 's'}`;
+  // status strip: shown · on the shelf · hidden. same file in two places counts once
+  const hid = hiddenTest();
+  const once = new Set();
+  let shelf = 0, hidden = 0;
+  for (const r of state.all) {
+    if (r.qhash) { if (once.has(r.qhash)) continue; once.add(r.qhash); }
+    shelf++;
+    if (hid && hid(r)) hidden++;
+  }
+  $('#count').textContent = `${n(v)} shown · ${n(shelf)} on the shelf` + (hidden ? ` · ${n(hidden)} in unticked folders` : '');
 }
 
 // ---------- rows (only the visible ones exist) ----------
@@ -244,7 +284,7 @@ function rowEl(i) {
     el = document.createElement('div');
     el.className = 'row';
     el.draggable = true;
-    el.innerHTML = '<div class="play">▶</div><div class="name"></div><div class="num bpm"></div><div class="keyc"></div><div class="num len"></div><div class="kind"></div><div class="tags"></div><div class="folder"></div><div class="added"></div>';
+    el.innerHTML = '<div class="play">▶</div><div class="name"></div><div class="num bpm"></div><div class="keyc"></div><div class="num len"></div><div class="kind"><span></span></div><div class="tags"></div><div class="folder"></div><div class="added"></div>';
     list.appendChild(el);
     pool[i] = el;
   }
@@ -278,7 +318,8 @@ function render() {
     c[3].className = 'keyc ' + (r.keySrc || '');
     c[3].title = srcLabel(r.keySrc);
     c[4].textContent = fmtLen(r.duration);
-    c[5].textContent = r._kind === 'loop' ? 'loop' : 'one-shot';
+    c[5].firstChild.textContent = r._kind === 'loop' ? 'loop' : 'one-shot';
+    c[5].firstChild.className = r._kind;
     c[5].className = 'kind' + (r.kindUser ? ' user' : '');
     c[5].title = r.kindUser ? 'set by you' : '';
     c[6].replaceChildren(...(r.tags || []).map((t) => { const s = document.createElement('span'); s.className = 'chip'; s.textContent = t; return s; }));
@@ -526,16 +567,15 @@ function togglePop(pop, anchor) {
   const open = pop.hidden;
   document.querySelectorAll('.pop').forEach((p) => { p.hidden = true; });
   if (!open) return;
-  if (anchor) {
-    const r = anchor.getBoundingClientRect();
-    pop.style.left = Math.min(r.left, window.innerWidth - 600) + 'px';
-    pop.style.top = r.bottom + 6 + 'px';
-  }
   pop.hidden = false;
+  // under its button, pushed left if it would run off the window
+  const r = anchor.getBoundingClientRect();
+  pop.style.left = Math.max(12, Math.min(r.left, window.innerWidth - pop.offsetWidth - 12)) + 'px';
+  pop.style.top = r.bottom + 8 + 'px';
 }
 $('#keyBtn').addEventListener('click', (e) => { e.stopPropagation(); togglePop($('#keyPop'), $('#keyBtn')); });
-$('#foldersBtn').addEventListener('click', (e) => { e.stopPropagation(); renderFolders(); togglePop($('#foldersPop')); });
-$('#help').addEventListener('click', (e) => { e.stopPropagation(); togglePop($('#helpbox')); });
+$('#foldersBtn').addEventListener('click', (e) => { e.stopPropagation(); renderFolders(); togglePop($('#foldersPop'), $('#foldersBtn')); });
+$('#help').addEventListener('click', (e) => { e.stopPropagation(); togglePop($('#helpbox'), $('#help')); });
 document.addEventListener('mousedown', (e) => {
   if (!e.target.closest('.pop') && !e.target.closest('#keyBtn, #foldersBtn, #help')) document.querySelectorAll('.pop').forEach((p) => { p.hidden = true; });
 });
@@ -550,7 +590,8 @@ $('#clearFilters').addEventListener('click', () => {
 // ---------- preview settings ----------
 function savePrefs() { window.shelf.setPrefs(state.prefs); }
 $('#autoplay').addEventListener('change', (e) => { state.prefs.autoplay = e.target.checked; savePrefs(); });
-$('#sync').addEventListener('change', (e) => { state.prefs.sync = e.target.checked; savePrefs(); retime(); });
+const lockTint = () => $('#lockBpm').classList.toggle('on', state.prefs.sync);
+$('#sync').addEventListener('change', (e) => { state.prefs.sync = e.target.checked; lockTint(); savePrefs(); retime(); });
 $('#syncBpm').addEventListener('input', (e) => {
   const v = parseFloat(e.target.value);
   if (v >= 20 && v <= 400) { state.prefs.syncBpm = v; savePrefs(); retime(); }
@@ -559,35 +600,62 @@ function retime() {
   const r = state.playingId && state.byId.get(state.playingId);
   if (r) nowText(r); // may still be loading; startDeck picks up the new rate then
   if (!live || !live.loop || live.rec !== r) return; // one-shots always play at rate 1
+  const rate = rateFor(r);
+  if (rate === live.rate) return;
+  if (live.src || rate === 1) { startDeck(r, live.buf, true); return; } // plain <-> stretched
   const t = ctx.currentTime + lead;
   live.input0 = posAt(live, t);
   live.t0 = t;
-  live.rate = rateFor(live.rec);
-  live.deck.node.schedule({ rate: live.rate, output: t });
+  live.rate = rate;
+  live.deck.node.schedule({ rate, output: t });
 }
 
-// ---------- folders panel ----------
+// ---------- folders popover ----------
+const TRASH = '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg>';
+const folderName = (root) => root.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || root;
 function renderFolders() {
   const s = state.settings;
+  const match = rootMatcher();
+  const counts = new Map();
+  for (const r of state.all) { const root = match(r._pl); if (root) counts.set(root, (counts.get(root) || 0) + 1); }
   const rows = s.roots.map((root) => {
-    const d = document.createElement('div');
-    d.className = 'rootrow';
-    d.innerHTML = '<span></span><button class="ghost" title="stop scanning this folder">×</button>';
-    d.firstChild.textContent = '‎' + root + '‎';
-    d.firstChild.title = root;
-    d.lastChild.addEventListener('click', async () => { applySettings(await window.shelf.removeRoot(root)); renderFolders(); });
+    const off = s.hidden.includes(root);
+    const d = document.createElement('label');
+    d.className = 'rootrow' + (off ? ' off' : '');
+    d.innerHTML = '<input type="checkbox"><div><div class="rname"></div><div class="rinfo"></div></div><span class="rcount"></span><button class="ghost" title="remove this folder and its files from the shelf">' + TRASH + '</button>';
+    const [box, text, count, del] = d.children;
+    box.checked = !off;
+    text.firstChild.textContent = folderName(root);
+    text.lastChild.textContent = '‎' + root + '‎';
+    text.title = root;
+    const c = counts.get(root) || 0;
+    count.textContent = state.scanRoot === root ? 'scanning…' : `${n(c)} file${c === 1 ? '' : 's'}`;
+    box.addEventListener('change', () => setHidden(box.checked ? s.hidden.filter((x) => x !== root) : [...s.hidden, root]));
+    del.addEventListener('click', async (e) => {
+      e.preventDefault();
+      const res = await window.shelf.removeRoot(root);
+      if (!res) return;
+      applySettings(res.settings);
+      if (res.res.removed.length) dropLocal(res.res); else refilter();
+      renderFolders();
+    });
     return d;
   });
   if (!rows.length) { const d = document.createElement('div'); d.className = 'rootrow none'; d.textContent = 'no folders yet'; rows.push(d); }
   $('#rootList').replaceChildren(...rows);
-  $('#rootList').style.opacity = s.allDrives ? 0.4 : 1;
-  $('#allDrives').checked = s.allDrives;
+  $('#enableAll').disabled = !s.hidden.length;
   $('#libPath').textContent = s.libDir ? '‎' + s.libDir + '‎' : 'not set yet (asked on first scan)';
-  $('#prune').disabled = s.allDrives;
+  $('#libPath').title = s.libDir || '';
+  $('#prune').disabled = !s.roots.length;
+}
+async function setHidden(list) {
+  applySettings(await window.shelf.setHidden(list));
+  refilter();
+  renderFolders();
 }
 function applySettings(s) { if (s) state.settings = { ...state.settings, ...s }; }
-$('#addRoot').addEventListener('click', async () => { applySettings(await window.shelf.addRoot()); renderFolders(); });
-$('#allDrives').addEventListener('change', async (e) => { applySettings(await window.shelf.setAllDrives(e.target.checked)); renderFolders(); });
+$('#addRoot').addEventListener('click', async () => { applySettings(await window.shelf.addRoot()); refilter(); renderFolders(); });
+$('#enableAll').addEventListener('click', () => setHidden([]));
 $('#changeLib').addEventListener('click', async () => { const d = await window.shelf.pickLib(); if (d) { state.settings.libDir = d; renderFolders(); } });
 $('#prune').addEventListener('click', async () => dropLocal(await window.shelf.prune()));
 $('#clearAll').addEventListener('click', async () => dropLocal(await window.shelf.clear()));
@@ -641,14 +709,14 @@ async function toggleScan() {
   const r = await window.shelf.scan();
   if (!r.ok) {
     setStatus(r.why);
-    if (r.needRoots) { renderFolders(); togglePop($('#foldersPop')); }
+    if (r.needRoots) { renderFolders(); togglePop($('#foldersPop'), $('#foldersBtn')); }
     return;
   }
   setScanning(true); setStatus('starting…');
   applySettings(await window.shelf.init());
 }
 $('#scan').addEventListener('click', toggleScan);
-$('#emptyBtn').addEventListener('click', (e) => { e.stopPropagation(); renderFolders(); togglePop($('#foldersPop')); });
+$('#emptyBtn').addEventListener('click', (e) => { e.stopPropagation(); renderFolders(); togglePop($('#foldersPop'), $('#foldersBtn')); });
 
 function statLine(s) {
   return `looked at ${n(s.seen)} files · ${n(s.audio)} audio · ${n(s.done)} added · ${n(s.skipped)} unchanged` + (s.failed ? ` · ${n(s.failed)} failed` : '');
@@ -660,9 +728,15 @@ window.shelf.on('scan:record', (rec) => {
   else { prep(rec); state.all.push(rec); state.byId.set(rec.id, rec); }
   if (!pending) pending = setTimeout(() => { pending = null; refilter(); }, 700);
 });
-window.shelf.on('scan:progress', (m) => setStatus(statLine(m.stats) + '  ·  ' + (m.current || '')));
+window.shelf.on('scan:progress', (m) => {
+  setStatus(statLine(m.stats) + '  ·  ' + (m.current || ''));
+  const root = m.current ? rootMatcher()(m.current.toLowerCase()) : null;
+  if (root !== state.scanRoot) { state.scanRoot = root; if (!$('#foldersPop').hidden) renderFolders(); }
+});
 window.shelf.on('scan:done', (m) => {
   setScanning(false);
+  state.scanRoot = null;
+  if (!$('#foldersPop').hidden) renderFolders();
   refilter();
   if (m.type === 'fatal') { setStatus('scan broke: ' + m.error.split('\n')[0]); return; }
   const cd = Object.entries(m.stats.cantDecode || {}).map(([k, v]) => `${n(v)} .${k}`).join(', ');
@@ -676,6 +750,7 @@ window.shelf.on('scan:done', (m) => {
   state.prefs = { ...state.prefs, ...(init.prefs || {}) };
   $('#autoplay').checked = state.prefs.autoplay;
   $('#sync').checked = state.prefs.sync;
+  lockTint();
   $('#syncBpm').value = state.prefs.syncBpm;
   state.all = init.records;
   for (const r of state.all) { prep(r); state.byId.set(r.id, r); }
