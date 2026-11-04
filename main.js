@@ -3,12 +3,15 @@ const path = require('path');
 const fs = require('fs');
 const { Worker } = require('worker_threads');
 const K = require('./lib/keys');
+const { kindOf } = require('./lib/classify');
+const { VERSION: ANA } = require('./lib/features');
 
 const DB_FILE = path.join(app.getPath('userData'), 'shelf.json');
 // hidden = scan folders that are unticked: their files stay on the shelf but don't show, and scans skip them
 let db = { libDir: null, roots: [], hidden: [], prefs: { autoplay: true, sync: false, syncBpm: 120 }, files: {} };
 let win = null;
 let worker = null;
+let mapper = null; // map layout worker
 let saveTimer = null;
 
 function load() {
@@ -25,11 +28,13 @@ function load() {
 }
 // keys from file/folder names get re-read every start, so parser fixes reach old records without a rescan.
 // a record whose only key came from a name the parser no longer believes gets detected again next scan
+// one-shots never take a folder's key (it says nothing about one hit); "C3"-style notes in names count
 function rereadKeys() {
   for (const r of Object.values(db.files)) {
     if (r.error || r.keySrc === 'tag' || r.keySrc === 'user') continue;
-    const fromName = K.keyFromName(r.name);
-    const k = fromName || K.keyFromFolder(r.folder);
+    const note = K.noteFromName(r.name);
+    const fromName = K.keyFromName(r.name) || (note && { root: note, scale: null });
+    const k = fromName || (kindOf(r) === 'loop' ? K.keyFromFolder(r.folder) : null);
     if (k) {
       // only the root came from the name: keep a detected scale if it was about the same root
       if (k.scale || r.key !== k.root) r.scale = k.scale;
@@ -138,7 +143,7 @@ function createWindow() {
 
 const settings = () => ({ libDir: db.libDir, roots: db.roots, hidden: db.hidden, prefs: db.prefs });
 
-ipcMain.handle('init', () => ({ ...settings(), records: Object.values(db.files), scanning: !!worker }));
+ipcMain.handle('init', () => ({ ...settings(), records: Object.values(db.files), scanning: !!worker, mapping: !!mapper }));
 ipcMain.handle('pick-lib', () => pickLib());
 ipcMain.handle('set-prefs', (_e, prefs) => { db.prefs = { ...db.prefs, ...prefs }; save(); return db.prefs; });
 
@@ -177,6 +182,10 @@ ipcMain.handle('scan', async () => {
     if (r.qhash && r.wav && r.wav !== r.path) hashList.push([r.qhash, r.wav]);
     if (r.redetect) continue; // not "known" = processed again (its wav copy is reused via hashList)
     known[id] = { path: r.path, size: r.size, mtime: r.mtime, error: r.error, wav: r.wav, qhash: r.qhash };
+    // not measured for the map yet: the worker does that after it's walked the folders
+    if (r.ana !== ANA && !r.error && r.wav) {
+      known[id].need = { wav: r.wav, name: r.name, folder: r.folder, ext: r.ext, duration: r.duration, bpm: r.bpm, bpmSrc: r.bpmSrc, acidOneShot: r.acidOneShot, kindUser: r.kindUser, keySrc: r.keySrc };
+    }
   }
   worker = new Worker(path.join(__dirname, 'lib', 'worker.js'));
   worker.on('message', (m) => {
@@ -190,6 +199,7 @@ ipcMain.handle('scan', async () => {
       save(true);
       send('scan:done', m);
       worker.terminate(); worker = null;
+      layout(false);
     }
   });
   worker.on('error', (err) => { send('scan:done', { type: 'fatal', error: String(err) }); worker = null; });
@@ -198,9 +208,30 @@ ipcMain.handle('scan', async () => {
 });
 
 ipcMain.handle('stop-scan', async () => {
-  if (worker) { await worker.terminate(); worker = null; save(true); }
+  if (worker) { await worker.terminate(); worker = null; save(true); layout(false); }
   return true;
 });
+
+// map positions. rebuild = lay everything out again; otherwise only samples without a spot get one
+function layout(rebuild) {
+  if (mapper) return false;
+  const items = Object.values(db.files).filter((r) => r.feat && !r.error);
+  if (!items.length || (!rebuild && items.every((r) => r.mx != null))) return false;
+  const slim = items.map((r) => ({ id: r.id, feat: r.feat, mx: rebuild ? null : r.mx, my: r.my, name: r.name, folder: r.folder, ext: r.ext, duration: r.duration, bpm: r.bpm, bpmSrc: r.bpmSrc, acidOneShot: r.acidOneShot, kindUser: r.kindUser }));
+  mapper = new Worker(path.join(__dirname, 'lib', 'layout.js'), { workerData: { items: slim, rebuild } });
+  mapper.on('message', (m) => {
+    if (m.type === 'progress') { send('map:progress', m); return; }
+    for (const [id, [x, y]] of Object.entries(m.pos)) { const r = db.files[id]; if (r) { r.mx = x; r.my = y; } }
+    for (const r of Object.values(db.files)) { if (m.sound[r.id]) r.soundGuess = m.sound[r.id]; else delete r.soundGuess; }
+    save(true);
+    send('map:done', { pos: m.pos, sound: m.sound });
+  });
+  const end = () => { mapper = null; };
+  mapper.on('error', (err) => { end(); send('map:progress', { what: 'map broke: ' + String(err.message || err) }); });
+  mapper.on('exit', end);
+  return true;
+}
+ipcMain.handle('rebuild-map', () => layout(true));
 
 // patch = { addTags?, removeTag?, bpm?, key?, scale?, kindUser?, xposeUser? }. scale alone = set major/minor
 ipcMain.handle('update', (_e, ids, patch) => {
@@ -251,6 +282,7 @@ ipcMain.handle('context-menu', (_e, info) => new Promise((resolve) => {
   const n = info.count;
   const menu = Menu.buildFromTemplate([
     { label: 'show in explorer', click: pick('reveal'), enabled: n === 1 },
+    { label: 'show similar on the map', click: pick('similar'), enabled: n === 1 && !!info.measured },
     { type: 'separator' },
     { label: n > 1 ? `mark ${n} as loop` : 'mark as loop', click: pick('loop') },
     { label: n > 1 ? `mark ${n} as one-shot` : 'mark as one-shot', click: pick('oneshot') },
@@ -283,6 +315,6 @@ ipcMain.handle('read-audio', (_e, file) => {
   return fs.promises.readFile(file);
 });
 
-app.whenReady().then(() => { load(); createWindow(); });
+app.whenReady().then(() => { load(); createWindow(); win.webContents.once('did-finish-load', () => layout(false)); });
 app.on('window-all-closed', () => app.quit());
-app.on('before-quit', () => { if (worker) worker.terminate(); save(true); });
+app.on('before-quit', () => { if (worker) worker.terminate(); if (mapper) mapper.terminate(); save(true); });

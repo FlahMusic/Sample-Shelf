@@ -222,7 +222,47 @@ footer {
   padding: 8px 18px 10px; font-size: 12.5px; font-weight: 600; font-variant-numeric: tabular-nums;
 }
 #status { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--soft); }
-#now { color: var(--play); max-width: 380px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+
+/* ---------- player strip ---------- */
+#player { display: grid; grid-template-columns: 30px minmax(160px, 300px) 1fr auto; align-items: center; gap: 12px; padding: 8px 18px 0; }
+#pinfo { min-width: 0; }
+#pname { font-weight: 700; color: var(--play); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+#pmeta { font-size: 12px; font-weight: 600; color: var(--soft); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+#wave { width: 100%; height: 38px; background: var(--field); border-radius: 10px; cursor: pointer; box-shadow: inset 0 2px 4px rgba(110,80,170,.14); }
+.vol { display: inline-flex; align-items: center; gap: 8px; }
+.vol input { width: 96px; accent-color: var(--play); }
+
+/* ---------- list / map switch + map ---------- */
+.seg { display: inline-flex; background: var(--field); border: 1px solid var(--card-brd); border-radius: 12px; padding: 3px; gap: 2px; box-shadow: inset 0 2px 4px rgba(110,80,170,.14); }
+.seg button { border: 0; background: none; border-radius: 9px; padding: 4px 12px; color: var(--soft); }
+.seg button:hover { color: var(--ink); }
+.seg button.on { background: var(--lav); color: var(--ink); box-shadow: 0 2px 0 var(--ring); }
+#mapView { display: none; flex: 1; min-height: 0; }
+body.mapmode #mapView { display: flex; }
+body.mapmode #head, body.mapmode #list { display: none; }
+#mapWrap { flex: 1; position: relative; min-width: 0; }
+#map { position: absolute; inset: 0; width: 100%; height: 100%; }
+#mapTip { position: absolute; pointer-events: none; max-width: 320px; background: #fff; border-radius: 10px; padding: 6px 10px; font-size: 12px; box-shadow: var(--shadow); }
+#mapTip b { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+#mapTip div { color: var(--soft); font-weight: 600; }
+#legend { position: absolute; left: 10px; top: 8px; background: rgba(251,248,255,.88); border-radius: 10px; padding: 3px 8px; display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 12px; font-weight: 600; color: var(--soft); pointer-events: none; max-width: 70%; }
+#legend span::before { content: ""; display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 5px; background: var(--c); vertical-align: -1px; }
+#mapNote { position: absolute; left: 10px; bottom: 8px; background: rgba(251,248,255,.88); border-radius: 10px; padding: 2px 8px; font-size: 12px; font-weight: 600; color: var(--soft); pointer-events: none; }
+#mapEmpty { position: absolute; inset: 0; display: grid; place-items: center; font-weight: 600; color: var(--soft); pointer-events: none; }
+#side { width: 330px; flex: none; border-left: 1px solid var(--line); display: flex; flex-direction: column; gap: 8px; padding: 10px 0 8px; min-height: 0; }
+#side > * { margin: 0 12px; }
+#sideTitle { font-weight: 700; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+#sideHint, #sideEmpty { font-size: 12.5px; color: var(--soft); }
+#sideList { flex: 1; overflow-y: auto; margin: 0; min-height: 0; }
+.srow { display: grid; grid-template-columns: 10px 1fr 40px 62px; gap: 8px; align-items: center; height: 28px; padding: 0 12px; cursor: default; border-bottom: 1px solid var(--line); }
+.srow:hover { background: var(--hover); }
+.srow.on { background: var(--sel); }
+.srow.playing .sname { color: var(--play); }
+.srow .dot { width: 9px; height: 9px; border-radius: 50%; }
+.sname { font-weight: 600; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.sbpm { text-align: right; font-variant-numeric: tabular-nums; color: var(--soft); }
+.skey { color: var(--soft); white-space: nowrap; overflow: hidden; }
+.sidefoot { display: flex; justify-content: flex-end; }
 
 #tagger { position: fixed; inset: 0; background: rgba(70,59,102,.25); display: flex; align-items: flex-start; justify-content: center; padding-top: 18vh; z-index: 20; }
 #tagger input {

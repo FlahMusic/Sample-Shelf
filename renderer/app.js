@@ -1,4 +1,4 @@
-/* global Keys, kindOf, isDrum, isVocal, SignalsmithStretch */
+/* global Keys, kindOf, isDrum, isVocal, soundOf, SignalsmithStretch, map, mapRefilter, drawMap, renderSide, mapPlayed, mapKey, mapStatus, setMode, relist, centerOn */
 const $ = (s) => document.querySelector(s);
 const ROW = 30;
 const PITCH_IDX = Object.fromEntries(Keys.PITCHES.map((p, i) => [p, i]));
@@ -12,10 +12,11 @@ const state = {
   rangeStart: -1, // where a shift-click range starts
   cursor: -1,
   playingId: null,
+  mode: 'list', // or 'map'
   scanning: false,
   settings: { roots: [], hidden: [], libDir: null },
   scanRoot: null, // folder the scan is in right now
-  prefs: { autoplay: true, sync: false, syncBpm: 120, lockKey: false, lockRoot: 'A', lockScale: 'minor' },
+  prefs: { autoplay: true, sync: false, syncBpm: 120, lockKey: false, lockRoot: 'A', lockScale: 'minor', view: 'list', volume: 0.8 },
   filt: { loop: true, oneshot: true, keys: new Set(), bpmMin: null, bpmMax: null },
 };
 
@@ -25,6 +26,8 @@ let ctx = null;
 let decks = [];
 let lead = 0; // how far ahead to schedule so the node's latency is covered
 let live = null; // { deck, rec, t0, input0, rate, dur, loop, timer }
+let master = null; // volume
+let last = null; // { rec, buf, peaks } of the last sound played, for the waveform
 let playToken = 0;
 let idleTimer = null;
 let engineReady = null;
@@ -36,6 +39,9 @@ const BLOCK_MS = 240;
 function engine() {
   if (!engineReady) engineReady = (async () => {
     ctx = new AudioContext({ latencyHint: 'interactive' });
+    master = ctx.createGain();
+    master.gain.value = state.prefs.volume ** 2;
+    master.connect(ctx.destination);
     // load the worklet from the package file instead of its default blob: url, so the csp stays 'self'
     SignalsmithStretch.moduleUrl = new URL('../node_modules/signalsmith-stretch/SignalsmithStretch.js', location.href).href;
     for (let i = 0; i < 2; i++) {
@@ -43,7 +49,7 @@ function engine() {
       await node.configure({ blockMs: BLOCK_MS });
       const gain = ctx.createGain();
       gain.gain.value = 0;
-      node.connect(gain).connect(ctx.destination);
+      node.connect(gain).connect(master);
       decks.push({ node, gain });
     }
     // latency() is input + output latency; only the output part needs covering.
@@ -74,8 +80,9 @@ function fadeOut(p, t) {
   else p.deck.node.schedule({ active: false, output: t + FADE });
 }
 
-// keepPos: same file carries on from where it is (used when switching between plain and stretched)
-function startDeck(r, buf, keepPos) {
+// keepPos: same file carries on from where it is (used when switching between plain and stretched).
+// at: start this many seconds into the file (seek, or 0 = from the top)
+function startDeck(r, buf, keepPos, at) {
   clearTimeout(idleTimer);
   if (ctx.state !== 'running') ctx.resume();
   const rate = rateFor(r);
@@ -85,7 +92,8 @@ function startDeck(r, buf, keepPos) {
   const t0 = ctx.currentTime + (plain ? 0.02 : lead);
   const loop = r._kind === 'loop';
   let input0 = 0;
-  if (keepPos && live) input0 = posAt(live, t0);
+  if (at != null) input0 = Math.max(0, Math.min(at, buf.duration - 0.01));
+  else if (keepPos && live) input0 = posAt(live, t0);
   // in-time swap: with bpm sync on, the next loop picks up on the same beat the last one was on
   else if (live && live.loop && loop && state.prefs.sync && live.rec.bpm && r.bpm) {
     const beats = posAt(live, t0) * live.rec.bpm / 60;
@@ -115,6 +123,8 @@ function startDeck(r, buf, keepPos) {
   g.setValueAtTime(0, t0);
   g.linearRampToValueAtTime(1, t0 + 0.004);
   live = { deck, src, buf, rec: r, t0, input0, rate, semis, dur: buf.duration, loop };
+  if (!last || last.buf !== buf) last = { rec: r, buf, peaks: null };
+  waveLoop();
   if (!loop) {
     const p = live;
     p.timer = setTimeout(() => { if (live === p) stop(); }, (t0 - ctx.currentTime + (buf.duration - input0) / rate) * 1000 + 50);
@@ -130,6 +140,10 @@ function idleLater() {
 // ---------- formatting ----------
 const fmtBpm = (b) => (b == null ? '' : Number.isInteger(b) ? String(b) : String(Math.round(b * 100) / 100));
 const fmtKey = (r) => (r.key ? r.key + (r.scale === 'minor' ? ' min' : r.scale === 'major' ? ' maj' : '') : '');
+// a key or note that isn't stated in the file name (or its tags, or by you) is a guess: it gets a ?
+const guessed = (r) => r.keySrc === 'auto' || r.keySrc === 'folder';
+const fmtKeyShown = (r) => (r._kind === 'oneshot' ? r.key || '' : fmtKey(r)) + (r.key && guessed(r) ? '?' : '');
+const fmtBpmShown = (r) => fmtBpm(r.bpm) + (r.bpm && r.bpmSrc === 'auto' ? '?' : '');
 const fmtLen = (d) => {
   if (!d && d !== 0) return '';
   if (d < 60) return d.toFixed(d < 10 ? 1 : 0) + 's';
@@ -225,6 +239,8 @@ function prep(r) {
   r._kind = kindOf(r);
   r._drum = isDrum(r);
   r._vocal = isVocal(r);
+  r._soundWord = soundOf(r);
+  r._sound = r._soundWord || r.soundGuess || null;
 }
 
 function sortFn() {
@@ -270,6 +286,7 @@ function refilter() {
   const fl = state.filt;
   $('#clearFilters').hidden = !(fl.loop !== fl.oneshot || fl.keys.size || fl.bpmMin != null || fl.bpmMax != null);
   render();
+  if (state.mode === 'map') mapRefilter();
   const v = state.view.length;
   // status strip: shown · on the shelf · hidden. same audio in two places is one sample
   const hid = hiddenTest();
@@ -296,9 +313,10 @@ function rowEl(i) {
   }
   return el;
 }
-const srcLabel = (s) => ({ auto: 'detected — could be off', name: 'from file name', folder: 'from folder name', tag: 'from file tags', user: 'set by you' }[s] || '');
+const srcLabel = (s) => ({ auto: 'detected, could be off (double-click to confirm or fix)', name: 'from file name', folder: 'from folder name, could be off (double-click to confirm or fix)', tag: 'from file tags', user: 'set by you' }[s] || '');
 
 function render() {
+  if (state.mode === 'map') { drawMap(); return; }
   const top = list.scrollTop;
   const h = list.clientHeight;
   const first = Math.max(0, Math.floor(top / ROW) - 4);
@@ -317,11 +335,11 @@ function render() {
     c[0].textContent = state.playingId === r.id ? '■' : r.error ? '!' : '▶';
     c[1].textContent = r.name;
     c[1].title = r.error ? `couldn't read: ${r.error}` : r._dupes ? `${r.name}\nsame file is in ${r._dupes} other place${r._dupes > 1 ? 's' : ''}, shown once` : r.name;
-    c[2].textContent = fmtBpm(r.bpm);
+    c[2].textContent = fmtBpmShown(r);
     c[2].className = 'num bpm ' + (r.bpmSrc || '');
     c[2].title = srcLabel(r.bpmSrc);
     const x = xposeFor(r);
-    c[3].textContent = x && x.semis ? `${fmtKey(r)} → ${fmtKey(x.to)} · ${fmtSemis(x.semis)}` : r._kind === 'oneshot' ? r.key || '' : fmtKey(r);
+    c[3].textContent = x && x.semis ? `${fmtKeyShown(r)} → ${fmtKey(x.to)} · ${fmtSemis(x.semis)}` : fmtKeyShown(r);
     if (r._kind === 'oneshot' && r.key) { const l = document.createElement('span'); l.className = 'notelbl'; l.textContent = 'note'; c[3].append(' ', l); }
     c[3].className = 'keyc ' + (r.keySrc || '') + (x && x.semis ? ' shifted' : '');
     c[3].title = srcLabel(r.keySrc) + (x ? '\n' + x.why : '');
@@ -374,39 +392,49 @@ function xposeFor(r) {
   if (r._drum && r.xposeUser !== 'on') return { why: 'drums: tempo only, no transpose (right-click to change)' };
   if (!r.key) return { badge: 'no key', why: 'no key known, so it plays as is' };
   if (!r.scale) return { badge: 'no scale', why: 'major or minor not known, so it plays as is. right-click to set it' };
-  if (r.keySrc === 'auto' && r.xposeUser !== 'on') return { badge: 'guess', why: 'key was detected and could be off, so it plays as is. double-click the key to confirm or fix it' };
+  if (guessed(r) && r.xposeUser !== 'on') return { badge: 'as is', why: 'the file name doesn\'t say the key, so it plays as is. double-click the key to confirm or fix it' };
   const semis = Keys.lockShift(r.key, r.scale, p.lockRoot, p.lockScale);
   const to = Keys.lockedKey(r.scale, p.lockRoot, p.lockScale);
-  return { semis, to: { key: to.root, scale: to.scale }, why: r.keySrc === 'auto' ? 'key was detected and could be off (you chose to transpose it anyway)' : '' };
+  return { semis, to: { key: to.root, scale: to.scale }, why: guessed(r) ? 'the key is a guess (you chose to transpose it anyway)' : '' };
 }
 function semisFor(r) { const x = xposeFor(r); return x && x.semis ? x.semis : 0; }
 const fmtSemis = (s) => (s > 0 ? '+' + s : s < 0 ? '−' + -s : '0');
 function nowText(r) {
-  const bits = [`▶ ${r.name}`];
+  const bits = [];
   if (rateFor(r) !== 1) bits.push(`${fmtBpm(r.bpm)} → ${state.prefs.syncBpm} bpm`);
+  else if (r.bpm) bits.push(fmtBpmShown(r) + ' bpm');
   const x = xposeFor(r);
-  if (x && x.semis) bits.push(`${fmtKey(r)} → ${fmtKey(x.to)}`);
-  $('#now').textContent = bits.join('  ·  ');
+  if (x && x.semis) bits.push(`${fmtKeyShown(r)} → ${fmtKey(x.to)}`);
+  else if (r.key) bits.push(fmtKeyShown(r));
+  bits.push(fmtLen(r.duration));
+  $('#pname').textContent = r.name;
+  $('#pname').title = r.path;
+  $('#pmeta').textContent = bits.join(' · ');
 }
 
 function stop() {
   playToken++;
   if (live) { fadeOut(live, ctx.currentTime); live = null; idleLater(); }
-  state.playingId = null; $('#now').textContent = ''; render();
+  state.playingId = null; $('#pp').textContent = '▶'; render(); drawWave();
+  if (state.mode === 'map') renderSide();
 }
-async function play(r, { toggle = true } = {}) {
+// at: seconds into the file to start from (seek, or 0 = from the top, no in-time swap)
+async function play(r, { toggle = true, at = null } = {}) {
   if (!r || !r.wav || r.error) return;
   if (toggle && state.playingId === r.id) { stop(); return; }
   const token = ++playToken;
   state.playingId = r.id;
+  $('#pp').textContent = '■';
   nowText(r);
   render();
+  mapPlayed(r);
+  if (state.mode === 'map') renderSide();
   try {
     await engine();
     if (ctx.state !== 'running') await ctx.resume();
-    const buf = await decode(r);
+    const buf = last && last.rec === r ? last.buf : await decode(r);
     if (token !== playToken) return; // something else got picked while this loaded
-    startDeck(r, buf);
+    startDeck(r, buf, false, at);
   } catch (err) {
     if (token !== playToken) return;
     setStatus(`can't play: ${err.message}`);
@@ -441,13 +469,18 @@ list.addEventListener('dblclick', (e) => {
   if (cell) editCell(state.view[i], cell);
   else if (!state.prefs.autoplay) play(state.view[i]);
 });
-list.addEventListener('contextmenu', async (e) => {
+list.addEventListener('contextmenu', (e) => {
   const i = rowIndex(e);
   if (i < 0) return;
   if (!state.sel.has(state.view[i].id)) select(i);
+  rowMenu(state.view[i]);
+});
+// right-click menu for the selection (r = the one clicked). the list and the map both use it
+async function rowMenu(r) {
   const ids = [...state.sel];
-  const action = await window.shelf.contextMenu({ count: ids.length, hasRoot: ids.some((id) => state.byId.get(id)?.key) });
-  if (action === 'reveal') window.shelf.reveal(state.view[i].wav || state.view[i].path);
+  const action = await window.shelf.contextMenu({ count: ids.length, hasRoot: ids.some((id) => state.byId.get(id)?.key), measured: r.mx != null });
+  if (action === 'reveal') window.shelf.reveal(r.wav || r.path);
+  else if (action === 'similar') { map.anchor = r; map.tab = 'similar'; map.step = -1; if (state.mode !== 'map') { setMode('map'); state.prefs.view = 'map'; savePrefs(); } centerOn(r); relist(); }
   else if (action === 'loop' || action === 'oneshot') { applyUpdates(await window.shelf.update(ids, { kindUser: action })); refilter(); }
   else if (action === 'autokind') { applyUpdates(await window.shelf.update(ids, { kindUser: null })); refilter(); }
   else if (action === 'xposeOn' || action === 'xposeOff' || action === 'xposeAuto') {
@@ -456,7 +489,7 @@ list.addEventListener('contextmenu', async (e) => {
   }
   else if (action === 'remove') removeSelected();
   else if (action === 'major' || action === 'minor') { applyUpdates(await window.shelf.update(ids, { scale: action })); retime(); }
-});
+}
 
 // native drag out to studio one / explorer
 list.addEventListener('dragstart', (e) => {
@@ -464,9 +497,15 @@ list.addEventListener('dragstart', (e) => {
   const i = rowIndex(e);
   if (i < 0) return;
   if (!state.sel.has(state.view[i].id)) select(i);
-  const files = [...state.sel].map((id) => state.byId.get(id)).filter((r) => r && r.wav && !r.error).map((r) => r.wav);
-  if (files.length) window.shelf.drag(files);
+  dragOut([...state.sel].map((id) => state.byId.get(id)));
 });
+// the preview stops when something gets dragged out, so it doesn't play over the daw
+function dragOut(recs) {
+  const files = recs.filter((r) => r && r.wav && !r.error).map((r) => r.wav);
+  if (!files.length) return;
+  stop();
+  window.shelf.drag(files);
+}
 
 const quote = (s) => (/\s/.test(s) ? `"${s}"` : s);
 function addToSearch(tok) {
@@ -673,6 +712,64 @@ function retime() {
   live.deck.node.schedule({ rate, semitones: semis, output: t });
 }
 
+// ---------- player strip: waveform with playhead, click to play from there, volume ----------
+const wave = $('#wave');
+const wg = wave.getContext('2d');
+let waveRaf = 0;
+function peaksOf(buf, cols) {
+  const ch = [];
+  for (let c = 0; c < buf.numberOfChannels; c++) ch.push(buf.getChannelData(c));
+  const len = ch[0].length;
+  const out = new Float32Array(cols);
+  for (let i = 0; i < cols; i++) {
+    let m = 0;
+    for (let j = Math.floor((i * len) / cols), e = Math.floor(((i + 1) * len) / cols); j < e; j++) for (const d of ch) { const v = Math.abs(d[j]); if (v > m) m = v; }
+    out[i] = m;
+  }
+  return out;
+}
+function drawWave() {
+  const dpr = window.devicePixelRatio || 1;
+  const w = wave.clientWidth, h = wave.clientHeight;
+  if (!w) return;
+  if (wave.width !== Math.round(w * dpr)) { wave.width = Math.round(w * dpr); wave.height = Math.round(h * dpr); }
+  wg.setTransform(dpr, 0, 0, dpr, 0, 0);
+  wg.clearRect(0, 0, w, h);
+  if (!last) return;
+  if (!last.peaks || last.peaks.length !== Math.floor(w)) last.peaks = peaksOf(last.buf, Math.floor(w));
+  let top = 0;
+  for (const v of last.peaks) top = Math.max(top, v);
+  const k = (h / 2 - 2) / (top || 1);
+  const playing = live && live.rec === last.rec;
+  const at = playing ? posAt(live, Math.max(ctx.currentTime, live.t0)) / live.dur : -1;
+  const cut = Math.floor(at * w);
+  for (let x = 0; x < last.peaks.length; x++) {
+    const a = Math.max(0.5, last.peaks[x] * k);
+    wg.fillStyle = x < cut ? '#9a72e8' : '#b9acd6';
+    wg.fillRect(x, h / 2 - a, 1, a * 2);
+  }
+  if (playing) { wg.fillStyle = '#463b66'; wg.fillRect(cut, 0, 1.5, h); }
+}
+function waveLoop() {
+  cancelAnimationFrame(waveRaf);
+  const tick = () => { drawWave(); if (live) waveRaf = requestAnimationFrame(tick); };
+  tick();
+}
+wave.addEventListener('mousedown', (e) => {
+  if (!last) return;
+  const at = (e.offsetX / wave.clientWidth) * last.buf.duration;
+  // same sound playing: carry on from there. otherwise play the last sound from there
+  if (live && live.rec === last.rec) startDeck(last.rec, last.buf, false, at);
+  else play(last.rec, { toggle: false, at });
+});
+$('#pp').addEventListener('click', () => { if (state.playingId) stop(); else play(last ? last.rec : state.view[state.cursor]); });
+$('#vol').addEventListener('input', (e) => {
+  state.prefs.volume = +e.target.value;
+  if (master) master.gain.setTargetAtTime(state.prefs.volume ** 2, ctx.currentTime, 0.02);
+  savePrefs();
+});
+window.addEventListener('resize', () => { if (last) { last.peaks = null; drawWave(); } });
+
 // ---------- folders popover ----------
 const TRASH = '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg>';
 const folderName = (root) => root.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || root;
@@ -724,19 +821,28 @@ $('#prune').addEventListener('click', async () => dropLocal(await window.shelf.p
 $('#clearAll').addEventListener('click', async () => dropLocal(await window.shelf.clear()));
 
 // ---------- keyboard ----------
+const MOVES = { ArrowDown: 1, ArrowUp: -1, PageDown: 'page', PageUp: '-page', Home: 'home', End: 'end' };
 document.addEventListener('keydown', (e) => {
   const tag = document.activeElement && document.activeElement.tagName;
-  const typing = tag === 'INPUT' && document.activeElement.type !== 'checkbox';
+  const typing = tag === 'INPUT' && !['checkbox', 'range'].includes(document.activeElement.type);
   if (e.key === 'Escape') {
-    document.querySelectorAll('.pop').forEach((p) => { p.hidden = true; });
+    // closes what's open first; with nothing open it stops the preview
+    const open = [...document.querySelectorAll('.pop')].filter((p) => !p.hidden);
+    open.forEach((p) => { p.hidden = true; });
     if (document.activeElement === $('#q') && $('#q').value) { $('#q').value = ''; refilter(); return; }
-    if (typing) document.activeElement.blur();
+    if (typing) { document.activeElement.blur(); return; }
+    if (!open.length) stop();
     return;
   }
-  if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && (!typing || document.activeElement === $('#q'))) {
+  if (state.mode === 'map' && (!typing || document.activeElement === $('#q')) && mapKey(e)) return;
+  const mv = MOVES[e.key];
+  const inSearch = document.activeElement === $('#q');
+  if (mv && (!typing || (inSearch && typeof mv === 'number')) && state.mode === 'list') {
     e.preventDefault();
     if (!state.view.length) return;
-    const i = Math.max(0, Math.min(state.view.length - 1, state.cursor + (e.key === 'ArrowDown' ? 1 : -1)));
+    const page = Math.max(1, Math.floor(list.clientHeight / ROW) - 1);
+    const to = { page: state.cursor + page, '-page': state.cursor - page, home: 0, end: state.view.length - 1 }[mv] ?? state.cursor + mv;
+    const i = Math.max(0, Math.min(state.view.length - 1, to));
     const wasPlaying = !!state.playingId;
     select(i, e.shiftKey ? e : null);
     scrollTo(i);
@@ -744,7 +850,8 @@ document.addEventListener('keydown', (e) => {
     return;
   }
   if (typing) { if (e.key === 'Enter') document.activeElement.blur(); return; }
-  if (e.key === ' ') { e.preventDefault(); play(state.view[state.cursor]); }
+  if (e.key === ' ') { e.preventDefault(); play(state.view[state.cursor] || (last && last.rec)); }
+  else if (e.key === 'Enter') { e.preventDefault(); play(state.view[state.cursor], { toggle: false, at: 0 }); }
   else if (e.key.toLowerCase() === 't') { e.preventDefault(); openTagger(); }
   else if (e.key === 'Delete') { e.preventDefault(); removeSelected(); }
   else if (e.key === '/' || (e.ctrlKey && e.key.toLowerCase() === 'f')) { e.preventDefault(); $('#q').focus(); }
@@ -763,6 +870,7 @@ document.querySelectorAll('.head [data-sort]').forEach((el) => el.addEventListen
 function setStatus(t) { $('#status').textContent = t; }
 function setScanning(on) {
   state.scanning = on;
+  if (state.mode === 'map') mapStatus();
   $('#scan').textContent = on ? 'stop' : 'scan';
   $('#scan').classList.toggle('on', on);
   $('#bar').classList.toggle('busy', on);
@@ -782,10 +890,11 @@ $('#scan').addEventListener('click', toggleScan);
 $('#emptyBtn').addEventListener('click', (e) => { e.stopPropagation(); renderFolders(); togglePop($('#foldersPop'), $('#foldersBtn')); });
 
 function statLine(s) {
-  return `looked at ${n(s.seen)} files · ${n(s.audio)} audio · ${n(s.done)} added · ${n(s.skipped)} unchanged` + (s.failed ? ` · ${n(s.failed)} failed` : '');
+  return `looked at ${n(s.seen)} files · ${n(s.audio)} audio · ${n(s.done)} added · ${n(s.skipped)} unchanged` + (s.analysed ? ` · ${n(s.analysed)} measured for the map` : '') + (s.failed ? ` · ${n(s.failed)} failed` : '');
 }
 let pending = null;
 window.shelf.on('scan:record', (rec) => {
+  if (rec.feat) map.zDirty = true;
   const cur = state.byId.get(rec.id);
   if (cur) { Object.assign(cur, rec); prep(cur); }
   else { prep(rec); state.all.push(rec); state.byId.set(rec.id, rec); }
@@ -819,6 +928,9 @@ window.shelf.on('scan:done', (m) => {
   state.all = init.records;
   for (const r of state.all) { prep(r); state.byId.set(r.id, r); }
   setScanning(init.scanning);
+  $('#vol').value = state.prefs.volume;
+  if (init.mapping) map.progress = 'laying out…';
   syncKeys();
   refilter();
+  setMode(state.prefs.view === 'map' ? 'map' : 'list');
 })();

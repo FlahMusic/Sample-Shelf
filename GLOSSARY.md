@@ -70,12 +70,15 @@ Major or minor.
 _Avoid_: mode, quality
 
 **Note**:
-The pitch of a one-shot, with no scale.
+The pitch of a one-shot, with no scale. A folder's key never becomes a one-shot's note.
 _Avoid_: key (for one-shots)
 
 **Guess**:
-A key or bpm the app detected that nobody has confirmed. A loop with a guessed key isn't transposed.
+A key, note, bpm or sound that wasn't stated in the file name, its tags or by flah: detected, or taken from the folder name. Shown with a "?". A loop with a guessed key isn't transposed.
 _Avoid_: auto
+
+**Stated**:
+Written in the file name or tags, or set by flah. The opposite of a guess.
 
 **Confirm**:
 Accept or fix a guessed key, which makes it count as set by you.
@@ -102,6 +105,22 @@ _Avoid_: rendered copy
 
 ## The map
 
+**Map**:
+The view where every shown sample is a dot, placed near samples that sound alike. The other view is the list.
+
 **Anchor**:
-The sample whose similar sounds the circles are built around.
+The sample the side list is built around: the dot last clicked.
 _Avoid_: seed, centre
+
+**Similar**:
+The samples that sound most like the anchor, nearest first. Drawn as circles around their dots.
+
+**Fits with**:
+Loops that would play together with an anchor loop: their keys sit together on the camelot wheel and their bpms are close (or half / double). With a lock on, that half is left out.
+_Avoid_: compatible, matches
+
+**Sweep**:
+Dragging across dots so each one plays as the pointer reaches it.
+
+**History**:
+The samples played so far, in order, to step back and forward through.

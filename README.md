@@ -12,13 +12,22 @@ double-click `start.bat`. first run installs stuff (needs node.js from nodejs.or
 - same file in two places = converted once, shown once
 - conversion keeps sample rate, channels and bit depth. lossy files (mp3/ogg/aac) come out 24-bit
 - studio one .audioloop / .musicloop: audio gets pulled out of the loop file, tempo kept
-- bpm/key: file tags, then file name, then (key only) folder name, then auto-detect. detected values show in italics, ones you set show bold pink
-- keys in names: `Am`, `F#m`, `C minor`, `Eb_Maj`, `KeyOfEm`, `Key of Bb`. a bare capital M isn't read as major (that's FM / AM synth names)
-- no auto-detect on files under 1.5s (one-shots)
+- bpm/key: file tags, then file name, then (loops only) folder name, then detected. anything not stated in the name, tags or by you is a guess and gets a **?** (`A min?`, `124?`). ones you set show bold pink
+- keys in names: `Am`, `F#m`, `C minor`, `Eb_Maj`, `KeyOfEm`, `Key of Bb`. a bare capital M isn't read as major (that's FM / AM synth names). notes with an octave (`C3`, `F#1`) count as a stated note
+- one-shots get a note, not a key: from the name, else detected (yin pitch). on 476 one-shots with the note in the name it answered 85% of the time and was right on 96% of those. no confident pitch = no note
+- no tempo detection on files under 1.5s
 - rescans only touch new or changed files
 
 ## can't decode
 .rx2 / .rex / .rcy, .soundx, .ncw — proprietary, ffmpeg can't read them. scan reports how many it skipped. macOS `._` files (metadata that comes along with packs made on a mac) aren't audio and get skipped.
+
+## map
+switch **list / map** up top. same search, filters, selection, preview and lock in both.
+- every shown sample is a dot, placed near ones that sound alike (34 numbers per sample from its first 3 s: mfcc, brightness, noisiness, length, attack. laid out with umap). colours = sound (kick, snare, hat, perc, bass, keys, vocal, fx), loops are mint
+- sound comes from name/folder words. the rest get a guess (`?`) from their nearest labelled neighbours. checked on his shelf with folders held out: right 66% of the time (kick 74%, snare 80%, hat 70%, bass 29%, perc 24%)
+- click a dot: it becomes the centre. the side list shows **similar** (nearest by sound, circles on the map) or **fits with** (loops whose key sits next to it on the camelot wheel and whose bpm is within 6% or half/double; with a lock on, that half is skipped). ↑↓ steps through the list and plays each one (shift = 5), ←→ goes back/forward through what you played, enter makes the current one the centre
+- drag across dots to hear them. ctrl+drag a dot (or drag a row in the side list) into studio pro. right-drag moves the map, wheel zooms, double-click empty space fits it back
+- scans measure new samples for the map. the first scan after this update measures everything already on the shelf (~20 min for 28k). new ones get placed next to their neighbours so the map doesn't move; "rebuild map" lays it all out again (~1 min)
 
 ## filters
 loops / one-shots checkboxes, pick any number of keys, bpm min–max. they all stack with the search box.
@@ -26,9 +35,11 @@ loops / one-shots checkboxes, pick any number of keys, bpm min–max. they all s
 loop vs one-shot: closest "loop" / "one shot" / "hit" word in the name or folders wins, then studio one loop files and tempo tags count as loops, then anything under 2s is a one-shot. longer files are loops if the detector found a solid tempo. right-click to set it yourself.
 
 ## preview
+the strip above the status line shows what's playing with its waveform: click it to play from there. volume slider on the right. space plays/stops, enter plays from the top, esc stops. dragging something out stops the preview.
+
 auto-play: clicking or arrowing to a sample plays it. loops loop, one-shots play once. lock bpm ___: loops play stretched to that tempo, pitch stays (signalsmith stretch, 240 ms blocks so bass stays in tune). arrowing to the next loop while one plays picks up on the same beat.
 
-lock key: loops get transposed to that key. minor loops go to the key, major loops to its relative major (lock E min: A min → E min, C maj → G maj). always the smallest shift, never more than 6 semitones. tempo and key change in one pass. drums only get the tempo. vocals keep their formants. loops with no key, or no major/minor, play as is with a badge. a detected key is a guess: it plays as is with a "guess" badge until you confirm or fix it (double-click the key). right-click: set major / minor, transpose / never transpose / let the app decide.
+lock key: loops get transposed to that key. minor loops go to the key, major loops to its relative major (lock E min: A min → E min, C maj → G maj). always the smallest shift, never more than 6 semitones. tempo and key change in one pass. drums only get the tempo. vocals keep their formants. loops with no key, or no major/minor, play as is with a badge. a guessed key (`?`) plays as is with an "as is" badge until you confirm or fix it (double-click the key). right-click: set major / minor, transpose / never transpose / let the app decide.
 
 one-shots show a note (like "C note"), not a key.
 
@@ -39,6 +50,6 @@ folders → "remove samples not in these folders" drops everything outside your 
 `kick` `-vocal` `bpm:120` `bpm:120-128` `bpm:>140` `key:Am` `key:F#` `scale:minor` `tag:dark` `ext:audioloop` `len:<2`
 
 ## keys
-space play · arrows move · T tag selected · double-click bpm/key to fix · alt-click tag to remove · drag rows into your DAW · right-click: show in explorer, loop/one-shot, set major/minor, transposing, remove · delete removes selected
+space play/stop · enter from the top · esc stop · arrows / page up/down / home / end move · T tag selected · double-click bpm/key to fix · alt-click tag to remove · drag rows into your DAW · right-click: show in explorer, loop/one-shot, set major/minor, transposing, remove · delete removes selected
 
 words used in the app: see GLOSSARY.md

@@ -9,6 +9,7 @@
 <body>
 <header>
   <div class="brand"><img src="art/slimelogo.png" alt="">sample shelf</div>
+  <div id="viewSeg" class="seg"><button data-v="list" class="on">list</button><button data-v="map">map</button></div>
   <div class="search">
     <svg viewBox="0 0 24 24" width="16" height="16"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2.2"/><path d="M20 20l-4-4" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
     <input id="q" type="text" spellcheck="false" autocomplete="off" placeholder="search names, folders, tags   (-word leaves it out)">
@@ -77,17 +78,21 @@
   <div><code>-vocal</code> leave out anything with "vocal"</div>
   <div><code>bpm:120-128</code> <code>key:Am</code> <code>tag:dark</code> <code>ext:audioloop</code> <code>len:&lt;2</code></div>
   <div class="divider"></div>
-  <div>click plays (if auto-play is on) · space plays · arrows move</div>
+  <div>click plays (if auto-play is on) · space plays / stops · enter plays from the top · esc stops · arrows, page up/down, home/end move</div>
+  <div>click the waveform to play from there</div>
   <div>drag rows into studio pro · ctrl/shift-click picks more than one</div>
   <div>T tags selected · alt-click a tag removes it</div>
   <div>double-click bpm or key to fix it · right-click for loop/one-shot, remove</div>
   <div>delete removes selected from the shelf</div>
   <div class="divider"></div>
   <div>lock key: loops get transposed to that key (minor ones to it, major ones to its relative major). drums only get the tempo</div>
-  <div>a detected key has a "guess" badge and plays as is. double-click the key to confirm or fix it</div>
+  <div>a key with a ? isn't in the file name (detected, or from the folder). it plays as is under the key lock. double-click it to confirm or fix it</div>
   <div>right-click: set major / minor, always or never transpose</div>
   <div class="divider"></div>
-  <div class="popsub">italic = detected, could be off · bold pink = set by you</div>
+  <div class="divider"></div>
+  <div>map: dots sit near sounds that sound alike. click one, then ↑↓ steps through what's similar (or what fits with it, by key and bpm). ←→ = back / forward. drag across dots to hear them. ctrl+drag a dot into studio pro. right-drag moves, wheel zooms, double-click empty space fits it back</div>
+  <div class="divider"></div>
+  <div class="popsub">? = a guess · italic = detected · bold pink = set by you</div>
 </div>
 
 <main>
@@ -103,6 +108,24 @@
     <div data-sort="added">added</div>
   </div>
   <div id="list"><div id="spacer"></div></div>
+  <div id="mapView">
+    <div id="mapWrap">
+      <canvas id="map"></canvas>
+      <div id="mapTip" hidden></div>
+      <div id="legend"></div>
+      <div id="mapNote"></div>
+      <div id="mapEmpty" hidden>no sounds measured yet. press scan and they show up here</div>
+    </div>
+    <aside id="side">
+      <div id="sideTabs" class="seg"><button data-tab="similar" class="on">similar</button><button data-tab="fits">fits with</button></div>
+      <div id="sideTitle"></div>
+      <label id="matchKeyBox" class="check"><input type="checkbox" id="matchKey"><span>only matching key</span></label>
+      <div id="sideHint">click a dot. ↑↓ steps through this list (shift = 5), ←→ goes back and forward through what you played, enter makes it the centre</div>
+      <div id="sideEmpty" hidden></div>
+      <div id="sideList"></div>
+      <div class="sidefoot"><button id="rebuildMap" class="pill ghosty" title="lay the whole map out again (about a minute)">rebuild map</button></div>
+    </aside>
+  </div>
   <div id="empty" hidden>
     <img src="art/slime-violet.png" alt="">
     <p id="emptyText">nothing on the shelf yet</p>
@@ -110,10 +133,16 @@
   </div>
 </main>
 
+<div id="player">
+  <button id="pp" class="ghost" title="play / stop (space)">▶</button>
+  <div id="pinfo"><div id="pname"></div><div id="pmeta"></div></div>
+  <canvas id="wave" title="click to play from there"></canvas>
+  <label class="vol" title="volume"><span class="lbl">vol</span><input type="range" id="vol" min="0" max="1" step="0.01" value="0.8"></label>
+</div>
+
 <footer>
   <div id="count"></div>
   <div id="status"></div>
-  <div id="now"></div>
 </footer>
 
 <div id="tagger" hidden>
@@ -124,5 +153,6 @@
 <script src="../lib/classify.js"></script>
 <script src="../node_modules/signalsmith-stretch/SignalsmithStretch.js"></script>
 <script src="app.js"></script>
+<script src="map.js"></script>
 </body>
 </html>
