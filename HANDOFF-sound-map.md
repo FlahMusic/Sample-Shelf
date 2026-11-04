@@ -217,6 +217,25 @@ short form of q1–q31 from the grilling rounds:
 - shelf has 1,695 `._*` macOS AppleDouble files as unreadable records ("Invalid data found"). not audio. not fixed: flah to decide (suggest the scan skips `._*`).
 - csp note: an `OfflineAudioContext` render needs `SignalsmithStretch.moduleUrl` set first (`engine()` does it), or the worklet tries `blob:` and the csp blocks it. pass 4 must call `engine()` (or set the url) before rendering.
 
+## round 3 decisions + work (2026-11-03)
+words are in `GLOSSARY.md` (sample, scan folder, library folder, unticked, kind, sound, key vs note, guess, confirm, lock, transpose, shift, anchor). ui copy follows it: "lock bpm", "kind" column, "library folder", "samples" in counts and dialogs. internal names (prefs.sync, db.hidden) unchanged.
+- **q33 changed by flah:** guessed (auto-detected) keys do NOT transpose. "guess" badge, plays as is. confirming or fixing the key (double-click, Enter) sets it as yours and it transposes. right-click "transpose with the key lock" still forces it.
+- q43: right-click "set major / set minor" (keeps the root, keySrc becomes user). tested: "All I want Is You 120 A#" → Bb min, −6.
+- q34: scans skip `._` files. existing ones are removed on start (1,695 on his shelf: 29,611 → 27,916 on a db copy).
+- q37: folder rows and confirm dialogs count samples (one per qhash), matching the status strip. q44: strip counts a sample as unticked only when every copy is.
+- q42: one-shots show "C note", not a key.
+- q40: code's shift-click `state.anchor` renamed `rangeStart`; "anchor" is the circles centre only.
+- **q32 still open (flah A/Bs in studio pro).** pitch measured on real bass with a log-spectrum alignment method (validated: original vs itself 0.0, exact resample −0.2 / mean 0.1 over 10 loops). 10 of his bass loops, E min lock at 128, mean |error| / max in cents, bass band 30–400 Hz:
+  - signalsmith block 120 ms (default): 4.5 / 7.1 transposed, 2.9 / 4.1 tempo only. always sharp.
+  - block 240 ms: 1.3 / 2.6, tempo only 1.1 / 3.8. block 320: 1.0 / 2.8, 0.9 / 2.8.
+  - one loop vs rubberband R2: +2.8 cents.
+  - drum transients (pre-echo in the 25 ms before hits, 8 real drum loops): original −22.9 dB, block 120 −18.1, 240 −17.6, 320 −16.9. block size barely matters next to stretching itself.
+  - **the engine now uses `BLOCK_MS = 240`** (preview and future renders, so drag = what you heard). latency 0.24 s, preview start for stretched sounds ~123 ms (plain sounds still ~19 ms). start-cut rechecked at 240: nothing cut, lands within 2.5 ms of schedule. tones: C maj → G maj now 0.7 cents (was +10). cpu while arrowing unchanged (1–4%).
+  - the synthetic sine results (0.45 Hz offset in buffer mode, peak-centroid bias) are still true for pure tones; on real music the bigger block fixes it.
+  - A/B files for flah (16-bit): scratchpad `renders/ab/` (signalsmith 120 ms, 240 ms, rubberband). if 240 is still sharp to his ear over an in-tune bass, use rubberband for dragged copies only.
+- key profiles, name-only truth (359 loops, 342 bass): bgate 57%, shaath 57, edma 55, braw 55, temperley 54, krumhansl 54, diatonic 52, edmm 41 (lock shift right = exact or relative). a made-up profile name throws, so edma/edmm are real names that ran. his named-key loops are almost all live bass; there are only 17 others, too few to judge edm-tuned profiles fairly.
+- tests against his library now run on a copy of his db (`--user-data-dir` = a scratch profile), because his own copy of the app was open on the real profile.
+
 ## suggested passes (one at a time, check in with flah after each)
 1. signalsmith engine swap in the existing list view (section 1)
 2. new look + folders popover + status strip (section 0). early, so everything after is built in the new style

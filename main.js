@@ -19,6 +19,9 @@ function load() {
   try { first = fs.statSync(DB_FILE).birthtimeMs || first; } catch {}
   for (const r of Object.values(db.files)) if (!r.added) r.added = first;
   rereadKeys();
+  // "._" macOS metadata files got onto older shelves as unreadable entries. scans skip them now
+  const junk = Object.values(db.files).filter((r) => r.name.startsWith('._')).map((r) => r.id);
+  if (junk.length) drop(junk);
 }
 // keys from file/folder names get re-read every start, so parser fixes reach old records without a rescan.
 // a record whose only key came from a name the parser no longer believes gets detected again next scan
@@ -97,6 +100,9 @@ function drop(ids) {
   return { removed: [...gone], deleted };
 }
 
+// same audio in two places is one sample
+const samples = (ids) => new Set(ids.map((id) => db.files[id].qhash || id)).size;
+
 const under = (p, root) => {
   const rel = path.relative(root, p);
   return rel && !rel.startsWith('..') && !path.isAbsolute(rel);
@@ -104,7 +110,7 @@ const under = (p, root) => {
 
 async function pickLib() {
   const r = await dialog.showOpenDialog(win, {
-    title: 'pick a folder for converted wavs',
+    title: 'pick a library folder (wav copies go here)',
     defaultPath: db.libDir || path.join(app.getPath('music'), 'Sample Shelf'),
     properties: ['openDirectory', 'createDirectory'],
   });
@@ -149,7 +155,8 @@ ipcMain.handle('add-root', async () => {
 ipcMain.handle('remove-root', async (_e, root) => {
   const rest = db.roots.filter((x) => x !== root);
   const ids = Object.values(db.files).filter((r) => under(r.path, root) && !rest.some((o) => under(r.path, o))).map((r) => r.id);
-  if (ids.length && !(await confirm(`remove ${root} and its ${ids.length.toLocaleString()} files from the shelf?`, 'the wav copies made for them get deleted too. your original files stay where they are.', 'remove'))) return null;
+  const n = samples(ids);
+  if (ids.length && !(await confirm(`remove ${root} and its ${n.toLocaleString()} sample${n === 1 ? '' : 's'} from the shelf?`, 'the wav copies made for them get deleted too. your original files stay where they are.', 'remove'))) return null;
   db.roots = rest;
   db.hidden = db.hidden.filter((x) => x !== root);
   let res = { removed: [], deleted: 0 };
@@ -195,7 +202,7 @@ ipcMain.handle('stop-scan', async () => {
   return true;
 });
 
-// patch = { addTags?, removeTag?, bpm?, key?, scale?, kindUser?, xposeUser? }
+// patch = { addTags?, removeTag?, bpm?, key?, scale?, kindUser?, xposeUser? }. scale alone = set major/minor
 ipcMain.handle('update', (_e, ids, patch) => {
   const out = [];
   for (const id of ids) {
@@ -206,6 +213,8 @@ ipcMain.handle('update', (_e, ids, patch) => {
     if ('bpm' in patch) { r.bpm = patch.bpm; r.bpmSrc = patch.bpm ? 'user' : null; }
     if ('key' in patch) { r.key = patch.key; r.scale = patch.scale || null; r.keySrc = patch.key ? 'user' : null; }
     if ('kindUser' in patch) { if (patch.kindUser) r.kindUser = patch.kindUser; else delete r.kindUser; }
+    // just major/minor: keeps the root it has (no root, nothing to set)
+    if ('scale' in patch && !('key' in patch) && r.key) { r.scale = patch.scale; r.keySrc = 'user'; }
     if ('xposeUser' in patch) { if (patch.xposeUser) r.xposeUser = patch.xposeUser; else delete r.xposeUser; }
     out.push(r);
   }
@@ -215,7 +224,8 @@ ipcMain.handle('update', (_e, ids, patch) => {
 
 ipcMain.handle('remove', async (_e, ids) => {
   if (!ids.length) return null;
-  const ok = await confirm(`remove ${ids.length} from the shelf?`, 'the wav copies made for them get deleted too. your original files stay where they are. if they sit inside a scan folder they come back next scan.', 'remove');
+  const n = samples(ids);
+  const ok = await confirm(`remove ${n} sample${n === 1 ? '' : 's'} from the shelf?`, 'the wav copies made for them get deleted too. your original files stay where they are. if they sit inside a scan folder they come back next scan.', 'remove');
   return ok ? drop(ids) : null;
 });
 
@@ -223,14 +233,15 @@ ipcMain.handle('prune', async () => {
   if (!db.roots.length) return { removed: [], deleted: 0, why: 'add a folder first' };
   const ids = Object.values(db.files).filter((r) => !db.roots.some((root) => under(r.path, root))).map((r) => r.id);
   if (!ids.length) return { removed: [], deleted: 0 };
-  const ok = await confirm(`remove ${ids.length} files that aren't in your scan folders?`, 'their wav copies get deleted too. originals stay where they are.', 'remove');
+  const n = samples(ids);
+  const ok = await confirm(`remove ${n} sample${n === 1 ? '' : 's'} that aren't in your scan folders?`, 'their wav copies get deleted too. originals stay where they are.', 'remove');
   return ok ? drop(ids) : null;
 });
 
 ipcMain.handle('clear', async () => {
   const ids = Object.keys(db.files);
   if (!ids.length) return { removed: [], deleted: 0 };
-  const ok = await confirm(`clear the whole shelf (${ids.length} files)?`, 'every wav copy this app made gets deleted, and your tags and fixes are gone. originals stay where they are.', 'clear');
+  const ok = await confirm(`clear the whole shelf (${samples(ids)} samples)?`, 'every wav copy this app made gets deleted, and your tags and fixes are gone. originals stay where they are.', 'clear');
   return ok ? drop(ids) : null;
 });
 
@@ -244,6 +255,9 @@ ipcMain.handle('context-menu', (_e, info) => new Promise((resolve) => {
     { label: n > 1 ? `mark ${n} as loop` : 'mark as loop', click: pick('loop') },
     { label: n > 1 ? `mark ${n} as one-shot` : 'mark as one-shot', click: pick('oneshot') },
     { label: 'let the app decide loop/one-shot', click: pick('autokind') },
+    { type: 'separator' },
+    { label: 'set major', click: pick('major'), enabled: !!info.hasRoot },
+    { label: 'set minor', click: pick('minor'), enabled: !!info.hasRoot },
     { type: 'separator' },
     { label: 'transpose with the key lock', click: pick('xposeOn') },
     { label: 'never transpose', click: pick('xposeOff') },

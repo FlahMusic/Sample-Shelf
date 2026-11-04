@@ -18,7 +18,7 @@ double-click `start.bat`. first run installs stuff (needs node.js from nodejs.or
 - rescans only touch new or changed files
 
 ## can't decode
-.rx2 / .rex / .rcy, .soundx, .ncw — proprietary, ffmpeg can't read them. scan reports how many it skipped.
+.rx2 / .rex / .rcy, .soundx, .ncw — proprietary, ffmpeg can't read them. scan reports how many it skipped. macOS `._` files (metadata that comes along with packs made on a mac) aren't audio and get skipped.
 
 ## filters
 loops / one-shots checkboxes, pick any number of keys, bpm min–max. they all stack with the search box.
@@ -26,15 +26,19 @@ loops / one-shots checkboxes, pick any number of keys, bpm min–max. they all s
 loop vs one-shot: closest "loop" / "one shot" / "hit" word in the name or folders wins, then studio one loop files and tempo tags count as loops, then anything under 2s is a one-shot. longer files are loops if the detector found a solid tempo. right-click to set it yourself.
 
 ## preview
-auto-play: clicking or arrowing to a sample plays it. loops loop, one-shots play once. sync to ___ bpm: loops play stretched to that tempo, pitch stays (signalsmith stretch). arrowing to the next loop while one plays picks up on the same beat.
+auto-play: clicking or arrowing to a sample plays it. loops loop, one-shots play once. lock bpm ___: loops play stretched to that tempo, pitch stays (signalsmith stretch, 240 ms blocks so bass stays in tune). arrowing to the next loop while one plays picks up on the same beat.
 
-lock key: loops play moved to that key. minor loops go to the key, major loops to its relative major (lock E min: A min → E min, C maj → G maj). always the smallest move, never more than 6 semitones. tempo and key change in one pass. drums only get the tempo. vocals keep their formants. loops with no key, or no major/minor, play as is with a badge. a detected key still gets moved, but it's a guess (italic). right-click: transpose / never transpose / let the app decide.
+lock key: loops get transposed to that key. minor loops go to the key, major loops to its relative major (lock E min: A min → E min, C maj → G maj). always the smallest shift, never more than 6 semitones. tempo and key change in one pass. drums only get the tempo. vocals keep their formants. loops with no key, or no major/minor, play as is with a badge. a detected key is a guess: it plays as is with a "guess" badge until you confirm or fix it (double-click the key). right-click: set major / minor, transpose / never transpose / let the app decide.
+
+one-shots show a note (like "C note"), not a key.
 
 ## cleanup
-folders → "remove files not in these folders" drops everything outside your scan folders (unticked ones still count as yours). "clear shelf" wipes everything. select rows + delete removes those. removing only ever deletes the wav copies this app made, never your originals. sort by "added" to grab a batch.
+folders → "remove samples not in these folders" drops everything outside your scan folders (unticked ones still count as yours). "clear shelf" wipes everything. select rows + delete removes those. removing only ever deletes the wav copies this app made, never your originals. sort by "added" to grab a batch.
 
 ## search
 `kick` `-vocal` `bpm:120` `bpm:120-128` `bpm:>140` `key:Am` `key:F#` `scale:minor` `tag:dark` `ext:audioloop` `len:<2`
 
 ## keys
-space play · arrows move · T tag selected · double-click bpm/key to fix · alt-click tag to remove · drag rows into your DAW · right-click: show in explorer, loop/one-shot, remove · delete removes selected
+space play · arrows move · T tag selected · double-click bpm/key to fix · alt-click tag to remove · drag rows into your DAW · right-click: show in explorer, loop/one-shot, set major/minor, transposing, remove · delete removes selected
+
+words used in the app: see GLOSSARY.md

@@ -9,7 +9,7 @@ const state = {
   view: [],
   sort: { key: 'name', dir: 1 },
   sel: new Set(),
-  anchor: -1,
+  rangeStart: -1, // where a shift-click range starts
   cursor: -1,
   playingId: null,
   scanning: false,
@@ -29,6 +29,9 @@ let playToken = 0;
 let idleTimer = null;
 let engineReady = null;
 const FADE = 0.03;
+// stft block length. the 120 ms default plays bass ~4.5 cents sharp on average (max 7) on flah's bass loops;
+// 240 ms brings it to ~1 (max 2.6), with drum pre-echo about the same (-17.6 vs -18.1 dB). costs ~60 ms more start delay
+const BLOCK_MS = 240;
 
 function engine() {
   if (!engineReady) engineReady = (async () => {
@@ -37,6 +40,7 @@ function engine() {
     SignalsmithStretch.moduleUrl = new URL('../node_modules/signalsmith-stretch/SignalsmithStretch.js', location.href).href;
     for (let i = 0; i < 2; i++) {
       const node = await SignalsmithStretch(ctx);
+      await node.configure({ blockMs: BLOCK_MS });
       const gain = ctx.createGain();
       gain.gain.value = 0;
       node.connect(gain).connect(ctx.destination);
@@ -267,15 +271,13 @@ function refilter() {
   $('#clearFilters').hidden = !(fl.loop !== fl.oneshot || fl.keys.size || fl.bpmMin != null || fl.bpmMax != null);
   render();
   const v = state.view.length;
-  // status strip: shown · on the shelf · hidden. same file in two places counts once
+  // status strip: shown · on the shelf · hidden. same audio in two places is one sample
   const hid = hiddenTest();
-  const once = new Set();
-  let shelf = 0, hidden = 0;
-  for (const r of state.all) {
-    if (r.qhash) { if (once.has(r.qhash)) continue; once.add(r.qhash); }
-    shelf++;
-    if (hid && hid(r)) hidden++;
-  }
+  const shown = new Map(); // sample -> has a copy in a ticked folder
+  for (const r of state.all) { const k = r.qhash || r.id; shown.set(k, shown.get(k) || !(hid && hid(r))); }
+  const shelf = shown.size;
+  let hidden = 0;
+  for (const s of shown.values()) if (!s) hidden++;
   $('#count').textContent = `${n(v)} shown · ${n(shelf)} on the shelf` + (hidden ? ` · ${n(hidden)} in unticked folders` : '');
 }
 
@@ -319,7 +321,8 @@ function render() {
     c[2].className = 'num bpm ' + (r.bpmSrc || '');
     c[2].title = srcLabel(r.bpmSrc);
     const x = xposeFor(r);
-    c[3].textContent = x && x.semis ? `${fmtKey(r)} → ${fmtKey(x.to)} · ${fmtSemis(x.semis)}` : fmtKey(r);
+    c[3].textContent = x && x.semis ? `${fmtKey(r)} → ${fmtKey(x.to)} · ${fmtSemis(x.semis)}` : r._kind === 'oneshot' ? r.key || '' : fmtKey(r);
+    if (r._kind === 'oneshot' && r.key) { const l = document.createElement('span'); l.className = 'notelbl'; l.textContent = 'note'; c[3].append(' ', l); }
     c[3].className = 'keyc ' + (r.keySrc || '') + (x && x.semis ? ' shifted' : '');
     c[3].title = srcLabel(r.keySrc) + (x ? '\n' + x.why : '');
     if (x && x.badge) { const b = document.createElement('span'); b.className = 'badge'; b.textContent = x.badge; c[3].append(c[3].textContent ? ' ' : '', b); }
@@ -344,15 +347,15 @@ const rowIndex = (e) => { const el = e.target.closest('#list .row'); return el ?
 function select(i, e) {
   const r = state.view[i];
   if (!r) return;
-  if (e && e.shiftKey && state.anchor >= 0) {
+  if (e && e.shiftKey && state.rangeStart >= 0) {
     state.sel.clear();
-    const [a, b] = [Math.min(state.anchor, i), Math.max(state.anchor, i)];
+    const [a, b] = [Math.min(state.rangeStart, i), Math.max(state.rangeStart, i)];
     for (let k = a; k <= b; k++) state.sel.add(state.view[k].id);
   } else if (e && (e.ctrlKey || e.metaKey)) {
     state.sel.has(r.id) ? state.sel.delete(r.id) : state.sel.add(r.id);
-    state.anchor = i;
+    state.rangeStart = i;
   } else {
-    state.sel.clear(); state.sel.add(r.id); state.anchor = i;
+    state.sel.clear(); state.sel.add(r.id); state.rangeStart = i;
   }
   state.cursor = i;
   render();
@@ -367,13 +370,14 @@ function rateFor(r) {
 function xposeFor(r) {
   const p = state.prefs;
   if (!p.lockKey || r._kind !== 'loop') return null;
-  if (r.xposeUser === 'off') return { badge: 'not shifted', why: 'you set this to never transpose' };
+  if (r.xposeUser === 'off') return { badge: 'not transposed', why: 'you set this to never transpose' };
   if (r._drum && r.xposeUser !== 'on') return { why: 'drums: tempo only, no transpose (right-click to change)' };
   if (!r.key) return { badge: 'no key', why: 'no key known, so it plays as is' };
-  if (!r.scale) return { badge: 'no scale', why: 'major or minor not known, so it plays as is' };
+  if (!r.scale) return { badge: 'no scale', why: 'major or minor not known, so it plays as is. right-click to set it' };
+  if (r.keySrc === 'auto' && r.xposeUser !== 'on') return { badge: 'guess', why: 'key was detected and could be off, so it plays as is. double-click the key to confirm or fix it' };
   const semis = Keys.lockShift(r.key, r.scale, p.lockRoot, p.lockScale);
   const to = Keys.lockedKey(r.scale, p.lockRoot, p.lockScale);
-  return { semis, to: { key: to.root, scale: to.scale }, why: r.keySrc === 'auto' ? 'key was detected, so the shift is a guess' : '' };
+  return { semis, to: { key: to.root, scale: to.scale }, why: r.keySrc === 'auto' ? 'key was detected and could be off (you chose to transpose it anyway)' : '' };
 }
 function semisFor(r) { const x = xposeFor(r); return x && x.semis ? x.semis : 0; }
 const fmtSemis = (s) => (s > 0 ? '+' + s : s < 0 ? '−' + -s : '0');
@@ -442,7 +446,7 @@ list.addEventListener('contextmenu', async (e) => {
   if (i < 0) return;
   if (!state.sel.has(state.view[i].id)) select(i);
   const ids = [...state.sel];
-  const action = await window.shelf.contextMenu({ count: ids.length });
+  const action = await window.shelf.contextMenu({ count: ids.length, hasRoot: ids.some((id) => state.byId.get(id)?.key) });
   if (action === 'reveal') window.shelf.reveal(state.view[i].wav || state.view[i].path);
   else if (action === 'loop' || action === 'oneshot') { applyUpdates(await window.shelf.update(ids, { kindUser: action })); refilter(); }
   else if (action === 'autokind') { applyUpdates(await window.shelf.update(ids, { kindUser: null })); refilter(); }
@@ -451,6 +455,7 @@ list.addEventListener('contextmenu', async (e) => {
     retime();
   }
   else if (action === 'remove') removeSelected();
+  else if (action === 'major' || action === 'minor') { applyUpdates(await window.shelf.update(ids, { scale: action })); retime(); }
 });
 
 // native drag out to studio one / explorer
@@ -591,13 +596,13 @@ function syncKeys() {
 }
 $('#keyNone').addEventListener('click', () => { state.filt.keys.clear(); syncKeys(); refilter(); });
 
-function togglePop(pop, anchor) {
+function togglePop(pop, btn) {
   const open = pop.hidden;
   document.querySelectorAll('.pop').forEach((p) => { p.hidden = true; });
   if (!open) return;
   pop.hidden = false;
   // under its button, pushed left if it would run off the window
-  const r = anchor.getBoundingClientRect();
+  const r = btn.getBoundingClientRect();
   pop.style.left = Math.max(12, Math.min(r.left, window.innerWidth - pop.offsetWidth - 12)) + 'px';
   pop.style.top = r.bottom + 8 + 'px';
 }
@@ -675,19 +680,19 @@ function renderFolders() {
   const s = state.settings;
   const match = rootMatcher();
   const counts = new Map();
-  for (const r of state.all) { const root = match(r._pl); if (root) counts.set(root, (counts.get(root) || 0) + 1); }
+  for (const r of state.all) { const root = match(r._pl); if (root) (counts.get(root) || counts.set(root, new Set()).get(root)).add(r.qhash || r.id); }
   const rows = s.roots.map((root) => {
     const off = s.hidden.includes(root);
     const d = document.createElement('label');
     d.className = 'rootrow' + (off ? ' off' : '');
-    d.innerHTML = '<input type="checkbox"><div><div class="rname"></div><div class="rinfo"></div></div><span class="rcount"></span><button class="ghost" title="remove this folder and its files from the shelf">' + TRASH + '</button>';
+    d.innerHTML = '<input type="checkbox"><div><div class="rname"></div><div class="rinfo"></div></div><span class="rcount"></span><button class="ghost" title="remove this folder and its samples from the shelf">' + TRASH + '</button>';
     const [box, text, count, del] = d.children;
     box.checked = !off;
     text.firstChild.textContent = folderName(root);
     text.lastChild.textContent = '‎' + root + '‎';
     text.title = root;
-    const c = counts.get(root) || 0;
-    count.textContent = state.scanRoot === root ? 'scanning…' : `${n(c)} file${c === 1 ? '' : 's'}`;
+    const c = counts.has(root) ? counts.get(root).size : 0;
+    count.textContent = state.scanRoot === root ? 'scanning…' : `${n(c)} sample${c === 1 ? '' : 's'}`;
     box.addEventListener('change', () => setHidden(box.checked ? s.hidden.filter((x) => x !== root) : [...s.hidden, root]));
     del.addEventListener('click', async (e) => {
       e.preventDefault();

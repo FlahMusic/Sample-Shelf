@@ -34,7 +34,7 @@
   <div class="grow"></div>
   <label class="check"><input type="checkbox" id="autoplay"><span>auto-play</span></label>
   <div id="lockBpm" class="lock">
-    <label class="check" title="loops play stretched to this tempo, pitch stays the same"><input type="checkbox" id="sync"><span>sync to</span></label>
+    <label class="check" title="loops play stretched to this tempo, pitch stays the same"><input type="checkbox" id="sync"><span>lock bpm</span></label>
     <input id="syncBpm" class="numbox" type="number" min="20" max="400" value="120">
     <span class="lbl">bpm</span>
   </div>
@@ -63,9 +63,9 @@
   <button id="addRoot" class="btn primary big">add folder or drive</button>
   <div class="divider"></div>
   <div class="quiet">
-    <div class="poprow"><span class="popsub">wav copies go to</span><span id="libPath" class="path"></span><button id="changeLib" class="pill">change</button></div>
+    <div class="poprow"><span class="popsub" title="where the app writes wav copies of non-wav files">library folder</span><span id="libPath" class="path"></span><button id="changeLib" class="pill">change</button></div>
     <div class="poprow">
-      <button id="prune" class="pill">remove files not in these folders</button>
+      <button id="prune" class="pill">remove samples not in these folders</button>
       <button id="clearAll" class="pill danger">clear shelf</button>
     </div>
   </div>
@@ -83,8 +83,9 @@
   <div>double-click bpm or key to fix it · right-click for loop/one-shot, remove</div>
   <div>delete removes selected from the shelf</div>
   <div class="divider"></div>
-  <div>lock key: loops play moved to that key (minor ones to it, major ones to its relative major). drums only get the tempo</div>
-  <div>right-click a loop to always or never transpose it</div>
+  <div>lock key: loops get transposed to that key (minor ones to it, major ones to its relative major). drums only get the tempo</div>
+  <div>a detected key has a "guess" badge and plays as is. double-click the key to confirm or fix it</div>
+  <div>right-click: set major / minor, always or never transpose</div>
   <div class="divider"></div>
   <div class="popsub">italic = detected, could be off · bold pink = set by you</div>
 </div>
@@ -96,7 +97,7 @@
     <div data-sort="bpm" class="num">bpm</div>
     <div data-sort="key">key</div>
     <div data-sort="duration" class="num">length</div>
-    <div data-sort="kind">type</div>
+    <div data-sort="kind">kind</div>
     <div>tags</div>
     <div data-sort="folder">folder</div>
     <div data-sort="added">added</div>
