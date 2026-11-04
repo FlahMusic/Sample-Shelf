@@ -9,6 +9,8 @@ contextBridge.exposeInMainWorld('shelf', {
   addRoot: call('add-root'),
   removeRoot: call('remove-root'),
   setHidden: call('set-hidden'),
+  scanCheck: call('scan-check'),
+  stopCheck: call('stop-check'),
   scan: call('scan'),
   stopScan: call('stop-scan'),
   update: call('update'),

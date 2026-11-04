@@ -22,6 +22,7 @@
 <div id="filters">
   <label class="check"><input type="checkbox" id="fLoop" checked><span>loops</span></label>
   <label class="check"><input type="checkbox" id="fShot" checked><span>one-shots</span></label>
+  <label class="check" title="only starred sounds (f stars the selected ones)"><input type="checkbox" id="fFav"><span>★ favourites</span></label>
   <div class="sep"></div>
   <span class="lbl">key</span>
   <div id="keyChips" class="chips"></div>
@@ -38,6 +39,8 @@
     <label class="check" title="loops play stretched to this tempo, pitch stays the same"><input type="checkbox" id="sync"><span>lock bpm</span></label>
     <input id="syncBpm" class="numbox" type="number" min="20" max="400" value="120">
     <span class="lbl">bpm</span>
+    <button id="halfBpm" class="pill ghosty" title="halve the bpm of the selected loops (fixes a tempo detected at double time)">½×</button>
+    <button id="dblBpm" class="pill ghosty" title="double the bpm of the selected loops (fixes a tempo detected at half time)">2×</button>
   </div>
   <div id="lockKeyBox" class="lock">
     <label class="check" title="loops get moved to this key. minor loops to the key, major loops to its relative major. drums aren't touched"><input type="checkbox" id="lockKey"><span>lock key</span></label>
@@ -72,6 +75,16 @@
   </div>
 </div>
 
+<div id="scanPop" class="pop" hidden>
+  <div class="poptitle">before scanning</div>
+  <div id="scanSum"></div>
+  <div id="scanFree" class="popsub"></div>
+  <div id="scanList"></div>
+  <div class="popsub">unticked folders get skipped, now and next time. tick one here to scan it again</div>
+  <div id="scanOld" class="poprow" hidden><span class="popsub"></span><button id="scanPrune" class="pill danger">remove them</button></div>
+  <div class="poprow"><button id="scanGo" class="btn primary">scan</button><button id="scanCancel" class="pill ghosty">cancel</button></div>
+</div>
+
 <div id="helpbox" class="pop" hidden>
   <div class="poptitle">help</div>
   <div><code>kick</code> name, folder or tag has "kick"</div>
@@ -81,7 +94,7 @@
   <div>click plays (if auto-play is on) · space plays / stops · enter plays from the top · esc stops · arrows, page up/down, home/end move</div>
   <div>click the waveform to play from there</div>
   <div>drag rows into studio pro · ctrl/shift-click picks more than one</div>
-  <div>T tags selected · alt-click a tag removes it</div>
+  <div>T tags selected · F stars them (favourites) · alt-click a tag removes it</div>
   <div>double-click bpm or key to fix it · right-click for loop/one-shot, remove</div>
   <div>delete removes selected from the shelf</div>
   <div class="divider"></div>

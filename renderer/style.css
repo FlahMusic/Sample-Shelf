@@ -146,6 +146,13 @@ header { display: flex; align-items: center; gap: 12px; padding: 12px 16px 8px; 
 .quiet { display: grid; gap: 8px; font-size: 12.5px; }
 .quiet .poprow { gap: 8px; }
 
+#scanPop { width: 520px; }
+#scanSum { font-weight: 700; }
+#scanFree.low { color: var(--danger); }
+#scanList { display: grid; gap: 6px; max-height: 340px; overflow-y: auto; margin: 0 -4px; padding: 2px 4px; }
+#scanList .rootrow { grid-template-columns: auto 1fr auto; }
+.why { color: var(--danger); font-weight: 600; }
+
 #keyPop { padding: 12px; }
 .keygrid { display: grid; grid-template-columns: repeat(12, 44px); gap: 5px; }
 .keygrid button {
@@ -167,6 +174,11 @@ main {
   height: var(--row); padding: 0 12px; gap: 10px;
 }
 .row > div { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.star { color: transparent; cursor: pointer; margin-right: 6px; font-size: 13px; }
+.row:hover .star { color: var(--line); }
+.row .star:hover { color: var(--soft); }
+.star.on, .row:hover .star.on { color: #e0a82e; }
+#lockBpm .pill { padding: 3px 8px; }
 .head { color: var(--soft); font-size: 12.5px; font-weight: 700; border-bottom: 1px solid var(--line); flex: none; height: 34px; }
 .head [data-sort] { cursor: pointer; }
 .head [data-sort]:hover, .head .asc, .head .desc { color: var(--ink); }

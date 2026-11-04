@@ -207,6 +207,15 @@ function paint() {
     g2.lineWidth = i < 8 ? 2 : 1.5;
     g2.beginPath(); g2.arc(q.x, q.y, rad + 4, 0, Math.PI * 2); g2.stroke();
   });
+  // favourites: a gold ring
+  g2.strokeStyle = '#e0a82e'; g2.lineWidth = 2;
+  g2.beginPath();
+  for (const p of map.pts) {
+    if (!p.r.fav) continue;
+    const x = sx(p), y = sy(p);
+    g2.moveTo(x + rad + 2.5, y); g2.arc(x, y, rad + 2.5, 0, Math.PI * 2);
+  }
+  g2.stroke();
   // selection, playing, anchor
   for (const id of state.sel) {
     const r = state.byId.get(id); const q = r && at(r);
@@ -250,7 +259,7 @@ function renderSide() {
     d.dataset.i = i;
     d.innerHTML = '<span class="dot"></span><span class="sname"></span><span class="sbpm"></span><span class="skey"></span>';
     d.children[0].style.background = colorOf(r);
-    d.children[1].textContent = r.name;
+    d.children[1].textContent = (r.fav ? '★ ' : '') + r.name;
     d.children[1].title = r.name + '\n' + r.folder;
     d.children[2].textContent = fmtBpmShown(r);
     d.children[3].textContent = fmtKeyShown(r);

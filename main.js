@@ -8,7 +8,8 @@ const { VERSION: ANA } = require('./lib/features');
 
 const DB_FILE = path.join(app.getPath('userData'), 'shelf.json');
 // hidden = scan folders that are unticked: their files stay on the shelf but don't show, and scans skip them
-let db = { libDir: null, roots: [], hidden: [], prefs: { autoplay: true, sync: false, syncBpm: 120 }, files: {} };
+// skip = folders inside scan folders that you unticked before a scan: never scanned, nothing copied
+let db = { libDir: null, roots: [], hidden: [], skip: [], prefs: { autoplay: true, sync: false, syncBpm: 120 }, files: {} };
 let win = null;
 let worker = null;
 let mapper = null; // map layout worker
@@ -21,6 +22,7 @@ function load() {
   let first = Date.now();
   try { first = fs.statSync(DB_FILE).birthtimeMs || first; } catch {}
   for (const r of Object.values(db.files)) if (!r.added) r.added = first;
+  rereadBpm(); // first: loop or one-shot depends on it, and folder keys only go to loops
   rereadKeys();
   // "._" macOS metadata files got onto older shelves as unreadable entries. scans skip them now
   const junk = Object.values(db.files).filter((r) => r.name.startsWith('._')).map((r) => r.id);
@@ -43,6 +45,16 @@ function rereadKeys() {
     } else if (r.keySrc === 'name' || r.keySrc === 'folder') {
       r.key = null; r.scale = null; r.keySrc = null; r.redetect = true;
     }
+  }
+}
+// same for a bpm read from the name: a lone number has to fit the length now. one that doesn't gets
+// its tempo detected again next scan
+function rereadBpm() {
+  for (const r of Object.values(db.files)) {
+    if (r.error || r.bpmSrc !== 'name') continue;
+    const v = K.bpmFromName(r.name, r.duration);
+    if (v) r.bpm = v;
+    else { r.bpm = null; r.bpmSrc = null; r.redetect = true; }
   }
 }
 let lastSave = Date.now();
@@ -68,6 +80,7 @@ function merge(rec) {
     rec.added = prev.added;
     if (prev.kindUser) rec.kindUser = prev.kindUser;
     if (prev.xposeUser) rec.xposeUser = prev.xposeUser;
+    if (prev.fav) rec.fav = true;
     if (prev.bpmSrc === 'user') { rec.bpm = prev.bpm; rec.bpmSrc = 'user'; }
     if (prev.keySrc === 'user') { rec.key = prev.key; rec.scale = prev.scale; rec.keySrc = 'user'; }
   }
@@ -170,23 +183,73 @@ ipcMain.handle('remove-root', async (_e, root) => {
 });
 ipcMain.handle('set-hidden', (_e, hidden) => { db.hidden = hidden.filter((x) => db.roots.includes(x)); save(true); return settings(); });
 
-ipcMain.handle('scan', async () => {
-  if (worker) return { ok: false, why: 'already scanning' };
-  let roots = db.roots.filter((x) => !db.hidden.includes(x));
-  if (process.env.SHELF_ROOTS) roots = process.env.SHELF_ROOTS.split(';'); // dev/testing only
+function scanRoots() {
+  if (process.env.SHELF_ROOTS) return process.env.SHELF_ROOTS.split(';'); // dev/testing only
+  return db.roots.filter((x) => !db.hidden.includes(x));
+}
+const underSkip = (p) => db.skip.some((x) => p.toLowerCase() === x.toLowerCase() || under(p, x));
+// on the shelf but not in a scan folder (or in one you skipped)
+const outside = (r) => !db.roots.some((root) => under(r.path, root)) || underSkip(r.path);
+
+// before a scan: what's new under each folder and roughly how big its wav copies get, plus free space.
+// nothing gets converted here
+let surveyor = null;
+ipcMain.handle('scan-check', async () => {
+  if (worker || surveyor) return { ok: false, why: 'already scanning' };
+  const roots = scanRoots();
   if (!roots.length) return { ok: false, why: db.roots.length ? 'tick a folder to scan' : 'pick a folder to scan first', needRoots: true };
-  if (!db.libDir && !(await pickLib())) return { ok: false, why: 'no library folder' };
+  const lib = db.libDir || path.join(app.getPath('music'), 'Sample Shelf');
+  let free = null;
+  for (let d = lib; d; d = path.dirname(d) === d ? null : path.dirname(d)) {
+    try { const st = await fs.promises.statfs(d); free = st.bavail * st.bsize; break; } catch {}
+  }
+  const wavs = [...new Set(Object.values(db.files).filter((r) => r.wav && r.wav !== r.path && outside(r)).map((r) => r.wav))];
+  surveyor = new Worker(path.join(__dirname, 'lib', 'worker.js'));
+  const res = await new Promise((resolve) => {
+    surveyor.on('message', (m) => {
+      if (m.type === 'progress') send('scan:progress', { stats: { seen: m.seen }, checking: true });
+      else resolve(m);
+    });
+    surveyor.on('error', (err) => resolve({ type: 'fatal', error: String(err) }));
+    surveyor.postMessage({ type: 'survey', libDir: db.libDir, known: knownFiles(true).known, roots, wavs });
+  });
+  if (surveyor) surveyor.terminate();
+  surveyor = null;
+  if (res.type === 'fatal') return { ok: false, why: 'check broke: ' + res.error.split('\n')[0] };
+  for (const g of res.groups) g.skipped = underSkip(g.path);
+  return { ok: true, ...res, free, drive: path.parse(lib).root, skip: db.skip };
+});
+ipcMain.handle('stop-check', () => { if (surveyor) { surveyor.terminate(); surveyor = null; } return true; });
+
+// what the worker needs to know about the shelf: unchanged files get skipped, copies get reused
+// all = also files waiting to be detected again (they count as on the shelf, for the check)
+function knownFiles(all) {
   const known = {};
   const hashList = [];
   for (const [id, r] of Object.entries(db.files)) {
     if (r.qhash && r.wav && r.wav !== r.path) hashList.push([r.qhash, r.wav]);
-    if (r.redetect) continue; // not "known" = processed again (its wav copy is reused via hashList)
+    if (r.redetect && !all) continue; // not "known" = processed again (its wav copy is reused via hashList)
     known[id] = { path: r.path, size: r.size, mtime: r.mtime, error: r.error, wav: r.wav, qhash: r.qhash };
-    // not measured for the map yet: the worker does that after it's walked the folders
-    if (r.ana !== ANA && !r.error && r.wav) {
-      known[id].need = { wav: r.wav, name: r.name, folder: r.folder, ext: r.ext, duration: r.duration, bpm: r.bpm, bpmSrc: r.bpmSrc, acidOneShot: r.acidOneShot, kindUser: r.kindUser, keySrc: r.keySrc };
+    // not measured for the map yet, or a detected tempo whose onsets weren't counted: the worker does
+    // that after it's walked the folders
+    if ((r.ana !== ANA || (r.bpmSrc === 'auto' && r.onsets == null)) && !r.error && r.wav) {
+      known[id].need = { wav: r.wav, name: r.name, folder: r.folder, ext: r.ext, duration: r.duration, bpm: r.bpm, bpmSrc: r.bpmSrc, acidOneShot: r.acidOneShot, kindUser: r.kindUser, keySrc: r.keySrc, ana: r.ana, onsets: r.onsets };
     }
   }
+  return { known, hashList };
+}
+
+// skip / unskip = folders from the check you unticked / ticked
+ipcMain.handle('scan', async (_e, opts = {}) => {
+  if (worker) return { ok: false, why: 'already scanning' };
+  const roots = scanRoots();
+  if (!roots.length) return { ok: false, why: db.roots.length ? 'tick a folder to scan' : 'pick a folder to scan first', needRoots: true };
+  if (!db.libDir && !(await pickLib())) return { ok: false, why: 'no library folder' };
+  const low = (a) => (a || []).map((x) => x.toLowerCase());
+  const unskip = low(opts.unskip);
+  db.skip = [...new Set([...db.skip.filter((x) => !unskip.includes(x.toLowerCase())), ...(opts.skip || [])])];
+  save(true);
+  const { known, hashList } = knownFiles();
   worker = new Worker(path.join(__dirname, 'lib', 'worker.js'));
   worker.on('message', (m) => {
     if (m.type === 'record') { send('scan:record', merge(m.rec)); save(); }
@@ -203,7 +266,7 @@ ipcMain.handle('scan', async () => {
     }
   });
   worker.on('error', (err) => { send('scan:done', { type: 'fatal', error: String(err) }); worker = null; });
-  worker.postMessage({ type: 'scan', libDir: db.libDir, known, roots, hashList });
+  worker.postMessage({ type: 'scan', libDir: db.libDir, known, roots, hashList, skip: db.skip });
   return { ok: true };
 });
 
@@ -233,7 +296,7 @@ function layout(rebuild) {
 }
 ipcMain.handle('rebuild-map', () => layout(true));
 
-// patch = { addTags?, removeTag?, bpm?, key?, scale?, kindUser?, xposeUser? }. scale alone = set major/minor
+// patch = { addTags?, removeTag?, bpm?, key?, scale?, kindUser?, xposeUser?, fav? }. scale alone = set major/minor
 ipcMain.handle('update', (_e, ids, patch) => {
   const out = [];
   for (const id of ids) {
@@ -247,6 +310,7 @@ ipcMain.handle('update', (_e, ids, patch) => {
     // just major/minor: keeps the root it has (no root, nothing to set)
     if ('scale' in patch && !('key' in patch) && r.key) { r.scale = patch.scale; r.keySrc = 'user'; }
     if ('xposeUser' in patch) { if (patch.xposeUser) r.xposeUser = patch.xposeUser; else delete r.xposeUser; }
+    if ('fav' in patch) { if (patch.fav) r.fav = true; else delete r.fav; }
     out.push(r);
   }
   save();
@@ -262,10 +326,10 @@ ipcMain.handle('remove', async (_e, ids) => {
 
 ipcMain.handle('prune', async () => {
   if (!db.roots.length) return { removed: [], deleted: 0, why: 'add a folder first' };
-  const ids = Object.values(db.files).filter((r) => !db.roots.some((root) => under(r.path, root))).map((r) => r.id);
+  const ids = Object.values(db.files).filter(outside).map((r) => r.id);
   if (!ids.length) return { removed: [], deleted: 0 };
   const n = samples(ids);
-  const ok = await confirm(`remove ${n} sample${n === 1 ? '' : 's'} that aren't in your scan folders?`, 'their wav copies get deleted too. originals stay where they are.', 'remove');
+  const ok = await confirm(`remove ${n} sample${n === 1 ? '' : 's'} that aren't in your scan folders?`, 'that counts folders you skipped. their wav copies get deleted too. originals stay where they are.', 'remove');
   return ok ? drop(ids) : null;
 });
 
@@ -283,6 +347,7 @@ ipcMain.handle('context-menu', (_e, info) => new Promise((resolve) => {
   const menu = Menu.buildFromTemplate([
     { label: 'show in explorer', click: pick('reveal'), enabled: n === 1 },
     { label: 'show similar on the map', click: pick('similar'), enabled: n === 1 && !!info.measured },
+    { label: info.allFav ? 'unfavourite (f)' : 'favourite (f)', click: pick('fav') },
     { type: 'separator' },
     { label: n > 1 ? `mark ${n} as loop` : 'mark as loop', click: pick('loop') },
     { label: n > 1 ? `mark ${n} as one-shot` : 'mark as one-shot', click: pick('oneshot') },

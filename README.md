@@ -12,11 +12,13 @@ double-click `start.bat`. first run installs stuff (needs node.js from nodejs.or
 - same file in two places = converted once, shown once
 - conversion keeps sample rate, channels and bit depth. lossy files (mp3/ogg/aac) come out 24-bit
 - studio one .audioloop / .musicloop: audio gets pulled out of the loop file, tempo kept
+- a bare number in a name ("Juno 106", "Perc 117") only counts as bpm when the length is within 25 ms of a whole number of bars at it. "128bpm" / "bpm128" always count
 - bpm/key: file tags, then file name, then (loops only) folder name, then detected. anything not stated in the name, tags or by you is a guess and gets a **?** (`A min?`, `124?`). ones you set show bold pink
 - keys in names: `Am`, `F#m`, `C minor`, `Eb_Maj`, `KeyOfEm`, `Key of Bb`. a bare capital M isn't read as major (that's FM / AM synth names). notes with an octave (`C3`, `F#1`) count as a stated note
 - one-shots get a note, not a key: from the name, else detected (yin pitch). on 476 one-shots with the note in the name it answered 85% of the time and was right on 96% of those. no confident pitch = no note
 - no tempo detection on files under 1.5s
 - rescans only touch new or changed files
+- scan checks first, without converting: how many new sounds each folder has and about how much room their wav copies take (a few files of each type get probed, the rest scaled by size. on Sample Packs: 6.81 gb estimated, 6.79 gb exact), and free space on the drive. folders with program files (exe, dll, vst3, game paks) or long files (songs, mixes) start unticked. unticked folders get skipped from then on. it only asks when copies come to 50 mb or more, a folder got flagged, or the drive would get under 5 gb free. it also says how much room wav copies of samples outside your folders take, with a button to remove them
 
 ## can't decode
 .rx2 / .rex / .rcy, .soundx, .ncw — proprietary, ffmpeg can't read them. scan reports how many it skipped. macOS `._` files (metadata that comes along with packs made on a mac) aren't audio and get skipped.
@@ -32,12 +34,14 @@ switch **list / map** up top. same search, filters, selection, preview and lock 
 ## filters
 loops / one-shots checkboxes, pick any number of keys, bpm min–max. they all stack with the search box.
 
-loop vs one-shot: closest "loop" / "one shot" / "hit" word in the name or folders wins, then studio one loop files and tempo tags count as loops, then anything under 2s is a one-shot. longer files are loops if the detector found a solid tempo. right-click to set it yourself.
+loop vs one-shot: under 1 s is always a one-shot (a bar at 240 bpm is 1 s). then the closest "loop" / "one shot" / "hit" word in the name or folders wins, then studio one loop files and stated tempos count as loops, then anything under 2 s is a one-shot. longer files are loops only if the detector finds a solid tempo **and** 4+ onsets in the first 8 s (a phrase, not one held note): 99% of files your words call loops have that many, 76% of one-shots fewer. right-click to set it yourself.
+
+★ favourites: click the star on a row (or press F) and tick "favourites" to see only those. they get a gold ring on the map.
 
 ## preview
 the strip above the status line shows what's playing with its waveform: click it to play from there. volume slider on the right. space plays/stops, enter plays from the top, esc stops. dragging something out stops the preview.
 
-auto-play: clicking or arrowing to a sample plays it. loops loop, one-shots play once. lock bpm ___: loops play stretched to that tempo, pitch stays (signalsmith stretch, 240 ms blocks so bass stays in tune). arrowing to the next loop while one plays picks up on the same beat.
+auto-play: clicking or arrowing to a sample plays it. loops loop, one-shots play once. lock bpm ___: loops play stretched to that tempo, pitch stays (signalsmith stretch, 240 ms blocks so bass stays in tune). arrowing to the next loop while one plays picks up on the same beat. ½× / 2× next to it halves or doubles the bpm of the selected loops, for a tempo detected at double or half.
 
 lock key: loops get transposed to that key. minor loops go to the key, major loops to its relative major (lock E min: A min → E min, C maj → G maj). always the smallest shift, never more than 6 semitones. tempo and key change in one pass. drums only get the tempo. vocals keep their formants. loops with no key, or no major/minor, play as is with a badge. a guessed key (`?`) plays as is with an "as is" badge until you confirm or fix it (double-click the key). right-click: set major / minor, transpose / never transpose / let the app decide.
 
@@ -50,6 +54,6 @@ folders → "remove samples not in these folders" drops everything outside your 
 `kick` `-vocal` `bpm:120` `bpm:120-128` `bpm:>140` `key:Am` `key:F#` `scale:minor` `tag:dark` `ext:audioloop` `len:<2`
 
 ## keys
-space play/stop · enter from the top · esc stop · arrows / page up/down / home / end move · T tag selected · double-click bpm/key to fix · alt-click tag to remove · drag rows into your DAW · right-click: show in explorer, loop/one-shot, set major/minor, transposing, remove · delete removes selected
+space play/stop · enter from the top · esc stop · arrows / page up/down / home / end move · T tag selected · F star selected · double-click bpm/key to fix · alt-click tag to remove · drag rows into your DAW · right-click: show in explorer, loop/one-shot, set major/minor, transposing, remove · delete removes selected
 
 words used in the app: see GLOSSARY.md

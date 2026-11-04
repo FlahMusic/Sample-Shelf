@@ -31,6 +31,14 @@ _Avoid_: root, source folder
 A scan folder whose samples are hidden and which scans skip. Nothing is deleted; ticking it brings them back.
 _Avoid_: hidden, disabled
 
+**Skipped**:
+A folder inside a scan folder that you unticked in the check. Scans never go in it and nothing in it gets a wav copy. Its samples count as outside your scan folders.
+_Avoid_: excluded, ignored
+
+**Check**:
+The look a scan takes first: what is new under each folder and how much room its wav copies would take. Nothing is converted.
+_Avoid_: survey, estimate
+
 **Folder**:
 The folder a file sits in.
 
@@ -49,11 +57,15 @@ Whether a sample is a loop or a one-shot.
 _Avoid_: type
 
 **Loop**:
-A sample meant to repeat in time, with a bpm.
+A phrase meant to repeat in time, with a bpm. At least a bar long, so never under 1 s.
 
 **One-shot**:
-A single hit or note, played once.
+A single hit or note (or a held sound), played once.
 _Avoid_: hit, shot
+
+**Favourite**:
+A sample you starred.
+_Avoid_: shortlist, like
 
 **Sound**:
 What a sample sounds like: kick, snare, hat, perc, bass, keys, vocal, fx.

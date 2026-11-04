@@ -17,7 +17,7 @@ const state = {
   settings: { roots: [], hidden: [], libDir: null },
   scanRoot: null, // folder the scan is in right now
   prefs: { autoplay: true, sync: false, syncBpm: 120, lockKey: false, lockRoot: 'A', lockScale: 'minor', view: 'list', volume: 0.8 },
-  filt: { loop: true, oneshot: true, keys: new Set(), bpmMin: null, bpmMax: null },
+  filt: { loop: true, oneshot: true, fav: false, keys: new Set(), bpmMin: null, bpmMax: null },
 };
 
 // ---------- audio engine (signalsmith stretch) ----------
@@ -210,6 +210,7 @@ function buildFilter() {
   const f = state.filt;
   // checkboxes: both on or both off = everything
   if (f.loop !== f.oneshot) { const want = f.loop ? 'loop' : 'oneshot'; tests.push((r) => r._kind === want); }
+  if (f.fav) tests.push((r) => r.fav);
   if (f.keys.size) tests.push((r) => r.key && (f.keys.has(keyId(r.key, r.scale)) || (!r.scale && [...f.keys].some((k) => k.startsWith(r.key + '|')))));
   if (f.bpmMin != null) tests.push((r) => r.bpm != null && r.bpm >= f.bpmMin);
   if (f.bpmMax != null) tests.push((r) => r.bpm != null && r.bpm <= f.bpmMax);
@@ -284,7 +285,7 @@ function refilter() {
   $('#spacer').style.height = state.view.length * ROW + 'px';
   $('#empty').hidden = state.all.length > 0;
   const fl = state.filt;
-  $('#clearFilters').hidden = !(fl.loop !== fl.oneshot || fl.keys.size || fl.bpmMin != null || fl.bpmMax != null);
+  $('#clearFilters').hidden = !(fl.loop !== fl.oneshot || fl.fav || fl.keys.size || fl.bpmMin != null || fl.bpmMax != null);
   render();
   if (state.mode === 'map') mapRefilter();
   const v = state.view.length;
@@ -333,7 +334,11 @@ function render() {
     el.classList.toggle('err', !!r.error);
     const c = el.children;
     c[0].textContent = state.playingId === r.id ? '■' : r.error ? '!' : '▶';
-    c[1].textContent = r.name;
+    const star = document.createElement('span');
+    star.className = 'star' + (r.fav ? ' on' : '');
+    star.textContent = '★';
+    star.title = r.fav ? 'unfavourite (f)' : 'favourite (f)';
+    c[1].replaceChildren(star, r.name);
     c[1].title = r.error ? `couldn't read: ${r.error}` : r._dupes ? `${r.name}\nsame file is in ${r._dupes} other place${r._dupes > 1 ? 's' : ''}, shown once` : r.name;
     c[2].textContent = fmtBpmShown(r);
     c[2].className = 'num bpm ' + (r.bpmSrc || '');
@@ -453,6 +458,7 @@ list.addEventListener('mousedown', (e) => {
   const i = rowIndex(e);
   if (i < 0) return;
   if (e.target.classList.contains('chip')) { addToSearch(`tag:${quote(e.target.textContent)}`); return; }
+  if (e.target.classList.contains('star')) { setFav([state.view[i]], !state.view[i].fav); return; }
   if (e.target.closest('.play')) { select(i); play(state.view[i]); return; }
   if (state.sel.has(state.view[i].id) && state.sel.size > 1 && !e.shiftKey && !e.ctrlKey) return; // keep group for dragging
   select(i, e);
@@ -478,7 +484,7 @@ list.addEventListener('contextmenu', (e) => {
 // right-click menu for the selection (r = the one clicked). the list and the map both use it
 async function rowMenu(r) {
   const ids = [...state.sel];
-  const action = await window.shelf.contextMenu({ count: ids.length, hasRoot: ids.some((id) => state.byId.get(id)?.key), measured: r.mx != null });
+  const action = await window.shelf.contextMenu({ count: ids.length, hasRoot: ids.some((id) => state.byId.get(id)?.key), measured: r.mx != null, allFav: ids.every((id) => state.byId.get(id)?.fav) });
   if (action === 'reveal') window.shelf.reveal(r.wav || r.path);
   else if (action === 'similar') { map.anchor = r; map.tab = 'similar'; map.step = -1; if (state.mode !== 'map') { setMode('map'); state.prefs.view = 'map'; savePrefs(); } centerOn(r); relist(); }
   else if (action === 'loop' || action === 'oneshot') { applyUpdates(await window.shelf.update(ids, { kindUser: action })); refilter(); }
@@ -487,6 +493,7 @@ async function rowMenu(r) {
     applyUpdates(await window.shelf.update(ids, { xposeUser: action === 'xposeOn' ? 'on' : action === 'xposeOff' ? 'off' : null }));
     retime();
   }
+  else if (action === 'fav') favSelected();
   else if (action === 'remove') removeSelected();
   else if (action === 'major' || action === 'minor') { applyUpdates(await window.shelf.update(ids, { scale: action })); retime(); }
 }
@@ -546,10 +553,33 @@ function editCell(r, cell) {
   input.addEventListener('blur', () => finish(true));
 }
 
+// favourites: a star, and the "favourites" filter
+async function setFav(recs, on) {
+  applyUpdates(await window.shelf.update(recs.map((r) => r.id), { fav: on }));
+  if (state.filt.fav) refilter();
+  if (state.mode === 'map') { drawMap(); renderSide(); }
+}
+function favSelected() {
+  const recs = [...state.sel].map((id) => state.byId.get(id)).filter(Boolean);
+  if (recs.length) setFav(recs, !recs.every((r) => r.fav));
+}
+// ½× / 2×: fixes a tempo that came out at double or half. on the selected loops, else the playing one
+async function scaleBpm(f) {
+  let recs = [...state.sel].map((id) => state.byId.get(id)).filter((r) => r && r.bpm && r._kind === 'loop');
+  if (!recs.length && state.playingId) recs = [state.byId.get(state.playingId)].filter((r) => r && r.bpm && r._kind === 'loop');
+  if (!recs.length) { setStatus('select a loop with a bpm first'); return; }
+  for (const r of recs) applyUpdates(await window.shelf.update([r.id], { bpm: Math.round(r.bpm * f * 100) / 100 }));
+  refilter(); retime();
+  setStatus(recs.length === 1 ? `${recs[0].name}: ${fmtBpm(recs[0].bpm)} bpm` : `${recs.length} loops ${f < 1 ? 'halved' : 'doubled'}`);
+}
+$('#halfBpm').addEventListener('click', () => scaleBpm(0.5));
+$('#dblBpm').addEventListener('click', () => scaleBpm(2));
+$('#fFav').addEventListener('change', (e) => { state.filt.fav = e.target.checked; refilter(); });
+
 function applyUpdates(recs) {
   for (const r of recs || []) {
     const cur = state.byId.get(r.id);
-    if (cur) { Object.assign(cur, r); if (!('kindUser' in r)) delete cur.kindUser; if (!('xposeUser' in r)) delete cur.xposeUser; prep(cur); }
+    if (cur) { Object.assign(cur, r); for (const k of ['kindUser', 'xposeUser', 'fav']) if (!(k in r)) delete cur[k]; prep(cur); }
   }
   render();
 }
@@ -649,13 +679,13 @@ $('#keyBtn').addEventListener('click', (e) => { e.stopPropagation(); togglePop($
 $('#foldersBtn').addEventListener('click', (e) => { e.stopPropagation(); renderFolders(); togglePop($('#foldersPop'), $('#foldersBtn')); });
 $('#help').addEventListener('click', (e) => { e.stopPropagation(); togglePop($('#helpbox'), $('#help')); });
 document.addEventListener('mousedown', (e) => {
-  if (!e.target.closest('.pop') && !e.target.closest('#keyBtn, #foldersBtn, #help, #lockKeyBtn')) document.querySelectorAll('.pop').forEach((p) => { p.hidden = true; });
+  if (!e.target.closest('.pop') && !e.target.closest('#keyBtn, #foldersBtn, #help, #lockKeyBtn, #scan')) document.querySelectorAll('.pop').forEach((p) => { p.hidden = true; });
 });
 
 $('#clearFilters').addEventListener('click', () => {
-  Object.assign(state.filt, { loop: true, oneshot: true, bpmMin: null, bpmMax: null });
+  Object.assign(state.filt, { loop: true, oneshot: true, fav: false, bpmMin: null, bpmMax: null });
   state.filt.keys.clear();
-  $('#fLoop').checked = true; $('#fShot').checked = true; $('#bpmMin').value = ''; $('#bpmMax').value = '';
+  $('#fLoop').checked = true; $('#fShot').checked = true; $('#fFav').checked = false; $('#bpmMin').value = ''; $('#bpmMax').value = '';
   syncKeys(); refilter();
 });
 
@@ -853,6 +883,7 @@ document.addEventListener('keydown', (e) => {
   if (e.key === ' ') { e.preventDefault(); play(state.view[state.cursor] || (last && last.rec)); }
   else if (e.key === 'Enter') { e.preventDefault(); play(state.view[state.cursor], { toggle: false, at: 0 }); }
   else if (e.key.toLowerCase() === 't') { e.preventDefault(); openTagger(); }
+  else if (e.key.toLowerCase() === 'f' && !e.ctrlKey) { e.preventDefault(); favSelected(); }
   else if (e.key === 'Delete') { e.preventDefault(); removeSelected(); }
   else if (e.key === '/' || (e.ctrlKey && e.key.toLowerCase() === 'f')) { e.preventDefault(); $('#q').focus(); }
   else if (e.ctrlKey && e.key.toLowerCase() === 'a') { e.preventDefault(); state.view.forEach((r) => state.sel.add(r.id)); render(); }
@@ -875,18 +906,87 @@ function setScanning(on) {
   $('#scan').classList.toggle('on', on);
   $('#bar').classList.toggle('busy', on);
 }
+const size = (b) => (b >= 1e9 ? (b / 1e9).toFixed(1) + ' gb' : Math.max(1, Math.round(b / 1e6)) + ' mb');
+// pressing scan first checks what's new and how much room the wav copies take. it only asks when that's
+// 50 mb or more, a folder looks like a program's or holds songs, or the drive would get tight
+let checking = false, check = null;
 async function toggleScan() {
   if (state.scanning) { await window.shelf.stopScan(); setScanning(false); setStatus('stopped'); return; }
-  const r = await window.shelf.scan();
-  if (!r.ok) {
-    setStatus(r.why);
-    if (r.needRoots) { renderFolders(); togglePop($('#foldersPop'), $('#foldersBtn')); }
+  if (checking) { await window.shelf.stopCheck(); return; }
+  checking = true;
+  $('#scan').textContent = 'checking…';
+  setStatus('checking folders…');
+  const c = await window.shelf.scanCheck();
+  checking = false;
+  $('#scan').textContent = 'scan';
+  if (!c.ok) {
+    setStatus(c.why || 'stopped');
+    if (c.needRoots) { renderFolders(); togglePop($('#foldersPop'), $('#foldersBtn')); }
     return;
   }
+  check = c;
+  for (const g of c.groups) g.on = !g.skipped && !g.program && !g.long;
+  const { bytes } = checkTotals();
+  const tight = c.free != null && c.free - bytes < 5e9 && bytes > 0;
+  if (bytes < 50e6 && !tight && !c.groups.some((g) => !g.skipped && (g.program || g.long))) { startScan(); return; }
+  renderCheck();
+  togglePop($('#scanPop'), $('#scan'));
+  setStatus('');
+}
+function checkTotals() {
+  let fresh = 0, copy = 0, bytes = 0;
+  for (const g of check.groups) if (g.on) { fresh += g.fresh; copy += g.copy; bytes += g.bytes; }
+  return { fresh, copy, bytes };
+}
+function renderCheck() {
+  const c = check;
+  const rows = c.groups.slice().sort((a, b) => b.bytes - a.bytes).map((g) => {
+    const d = document.createElement('label');
+    d.className = 'rootrow' + (g.on ? '' : ' off');
+    d.innerHTML = '<input type="checkbox"><div><div class="rname"></div><div class="rinfo"></div></div><span class="rcount"></span>';
+    const [box, text, count] = d.children;
+    box.checked = g.on;
+    text.firstChild.textContent = g.path === g.root ? folderName(g.root) + ' (loose files)' : folderName(g.path);
+    const why = g.program ? 'has program files' : g.long ? `long files, songs or mixes? (${Math.round(g.median / 60)} min each)` : g.skipped ? 'skipped before' : '';
+    text.lastChild.innerHTML = why ? '<span class="why"></span>' : '';
+    if (why) text.lastChild.firstChild.textContent = why; else text.lastChild.textContent = '‎' + g.path + '‎';
+    text.title = g.path;
+    count.textContent = `${n(g.fresh)} new` + (g.copy ? ` · ${size(g.bytes)}` : ' · no copies');
+    box.addEventListener('change', () => { g.on = box.checked; d.classList.toggle('off', !g.on); checkSummary(); });
+    return d;
+  });
+  $('#scanList').replaceChildren(...rows);
+  $('#scanOld').hidden = !c.oldBytes;
+  $('#scanOld span').textContent = `${size(c.oldBytes)} of wav copies are for samples outside your scan folders`;
+  checkSummary();
+}
+function checkSummary() {
+  const c = check, t = checkTotals();
+  $('#scanSum').textContent = `${n(t.fresh)} new sound${t.fresh === 1 ? '' : 's'}` + (t.copy ? ` · ${n(t.copy)} need wav copies, about ${size(t.bytes)}` : ' · all wav already, no copies');
+  const after = c.free - t.bytes;
+  $('#scanFree').textContent = c.free == null ? '' : `free on ${c.drive} ${size(c.free)}` + (t.bytes ? ` · ${after < 0 ? 'not enough room' : size(after) + ' after'}` : '');
+  $('#scanFree').classList.toggle('low', c.free != null && t.bytes > 0 && after < 5e9);
+  $('#scanGo').disabled = c.free != null && after < 0;
+}
+async function startScan(opts) {
+  const r = await window.shelf.scan(opts);
+  if (!r.ok) { setStatus(r.why); return; }
   setScanning(true); setStatus('starting…');
   applySettings(await window.shelf.init());
 }
-$('#scan').addEventListener('click', toggleScan);
+$('#scan').addEventListener('click', (e) => { e.stopPropagation(); toggleScan(); });
+$('#scanGo').addEventListener('click', () => {
+  $('#scanPop').hidden = true;
+  startScan({ skip: check.groups.filter((g) => !g.on).map((g) => g.path), unskip: check.groups.filter((g) => g.on && g.skipped).map((g) => g.path) });
+});
+$('#scanCancel').addEventListener('click', () => { $('#scanPop').hidden = true; });
+$('#scanPrune').addEventListener('click', async () => {
+  const res = await window.shelf.prune();
+  if (!res || !res.removed) return;
+  dropLocal(res);
+  check.oldBytes = 0;
+  $('#scanOld').hidden = true;
+});
 $('#emptyBtn').addEventListener('click', (e) => { e.stopPropagation(); renderFolders(); togglePop($('#foldersPop'), $('#foldersBtn')); });
 
 function statLine(s) {
@@ -901,6 +1001,7 @@ window.shelf.on('scan:record', (rec) => {
   if (!pending) pending = setTimeout(() => { pending = null; refilter(); }, 700);
 });
 window.shelf.on('scan:progress', (m) => {
+  if (m.checking) { setStatus(`checking folders… ${n(m.stats.seen)} files`); return; }
   setStatus(statLine(m.stats) + '  ·  ' + (m.current || ''));
   const root = m.current ? rootMatcher()(m.current.toLowerCase()) : null;
   if (root !== state.scanRoot) { state.scanRoot = root; if (!$('#foldersPop').hidden) renderFolders(); }
