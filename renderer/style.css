@@ -271,7 +271,7 @@ body.mapmode #head, body.mapmode #list { display: none; }
 .srow.on { background: var(--sel); }
 .srow.playing .sname { color: var(--play); }
 .srow .dot { width: 9px; height: 9px; border-radius: 50%; }
-.sname { font-weight: 600; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.sname { font-weight: 600; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; direction: rtl; text-align: left; }
 .sbpm { text-align: right; font-variant-numeric: tabular-nums; color: var(--soft); }
 .skey { color: var(--soft); white-space: nowrap; overflow: hidden; }
 .sidefoot { display: flex; justify-content: flex-end; }

@@ -25,11 +25,11 @@ double-click `start.bat`. first run installs stuff (needs node.js from nodejs.or
 
 ## map
 switch **list / map** up top. same search, filters, selection, preview and lock in both.
-- every shown sample is a dot, placed near ones that sound alike (34 numbers per sample from its first 3 s: mfcc, brightness, noisiness, length, attack. laid out with umap). colours = sound (kick, snare, hat, perc, bass, keys, vocal, fx), loops are mint
-- sound comes from name/folder words. the rest get a guess (`?`) from their nearest labelled neighbours. checked on his shelf with folders held out: right 66% of the time (kick 74%, snare 80%, hat 70%, bass 29%, perc 24%)
+- every shown sample is a dot, placed near ones that sound alike (its first 10 s go through a sound model, CLAP: laion clap-htsat-unfused, apache-2.0, run with onnxruntime. 32 numbers per sample, laid out with umap). on 3,355 of your samples with a sound word in the name, the 10 nearest from **other** packs share the sound 57% of the time (the hand-made features before: 39%, chance: 13%). the bigger CLAP models were no better and twice as slow. colours = sound (kick, snare, hat, perc, bass, keys, vocal, fx), loops are mint
+- sound comes from name/folder words. the rest get a guess (`?`) from their nearest labelled neighbours. checked on your shelf with other packs only as neighbours: right 64% of the time (one-shots: kick 84%, snare 84%, hat 84%, bass 70%, perc 47%)
 - click a dot: it becomes the centre. the side list shows **similar** (nearest by sound, circles on the map) or **fits with** (loops whose key sits next to it on the camelot wheel and whose bpm is within 6% or half/double; with a lock on, that half is skipped). ↑↓ steps through the list and plays each one (shift = 5), ←→ goes back/forward through what you played, enter makes the current one the centre
 - drag across dots to hear them. ctrl+drag a dot (or drag a row in the side list) into studio pro. right-drag moves the map, wheel zooms, double-click empty space fits it back
-- scans measure new samples for the map. the first scan after this update measures everything already on the shelf (~20 min for 28k). new ones get placed next to their neighbours so the map doesn't move; "rebuild map" lays it all out again (~1 min)
+- scans measure new samples for the map, about 0.6 s each. the first scan downloads the model once (118 mb, into the app's own folder, checked against its sha256). samples measured the old way leave the map until a scan measures them again: the check before scanning says how many and how long. remove samples outside your folders first if there are lots. new ones get placed next to their neighbours so the map doesn't move; "rebuild map" lays it all out again (~1 min)
 
 ## filters
 loops / one-shots checkboxes, pick any number of keys, bpm min–max. they all stack with the search box.

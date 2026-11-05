@@ -6,8 +6,10 @@ if errorlevel 1 (
   pause
   exit /b
 )
-if not exist node_modules (
-  echo First run: installing. Takes a minute.
+rem first run, or a package was added since the last install
+node -e "for (const d in require('./package.json').dependencies) if (!require('fs').existsSync('node_modules/' + d + '/package.json')) process.exit(1)" >nul 2>nul
+if errorlevel 1 (
+  echo Installing packages. Takes a minute.
   call npm install
   if errorlevel 1 ( pause & exit /b )
 )

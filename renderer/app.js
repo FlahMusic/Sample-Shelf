@@ -906,6 +906,7 @@ function setScanning(on) {
   $('#scan').classList.toggle('on', on);
   $('#bar').classList.toggle('busy', on);
 }
+const MODEL_BYTES = 117528416;
 const size = (b) => (b >= 1e9 ? (b / 1e9).toFixed(1) + ' gb' : Math.max(1, Math.round(b / 1e6)) + ' mb');
 // pressing scan first checks what's new and how much room the wav copies take. it only asks when that's
 // 50 mb or more, a folder looks like a program's or holds songs, or the drive would get tight
@@ -927,8 +928,8 @@ async function toggleScan() {
   check = c;
   for (const g of c.groups) g.on = !g.skipped && !g.program && !g.long;
   const { bytes } = checkTotals();
-  const tight = c.free != null && c.free - bytes < 5e9 && bytes > 0;
-  if (bytes < 50e6 && !tight && !c.groups.some((g) => !g.skipped && (g.program || g.long))) { startScan(); return; }
+  const tight = c.free != null && c.free - bytes - c.model < 5e9 && bytes + c.model > 0;
+  if (bytes < 50e6 && !c.model && c.measure < 500 && !tight && !c.groups.some((g) => !g.skipped && (g.program || g.long))) { startScan(); return; }
   renderCheck();
   togglePop($('#scanPop'), $('#scan'));
   setStatus('');
@@ -963,13 +964,20 @@ function renderCheck() {
 function checkSummary() {
   const c = check, t = checkTotals();
   $('#scanSum').textContent = `${n(t.fresh)} new sound${t.fresh === 1 ? '' : 's'}` + (t.copy ? ` · ${n(t.copy)} need wav copies, about ${size(t.bytes)}` : ' · all wav already, no copies');
-  const after = c.free - t.bytes;
-  $('#scanFree').textContent = c.free == null ? '' : `free on ${c.drive} ${size(c.free)}` + (t.bytes ? ` · ${after < 0 ? 'not enough room' : size(after) + ' after'}` : '');
-  $('#scanFree').classList.toggle('low', c.free != null && t.bytes > 0 && after < 5e9);
+  // about 0.6 s a sound on flah's pc (the sound model takes most of it)
+  const secs = (t.fresh + c.measure) * 0.6;
+  $('#scanTime').textContent = c.measure ? `${n(c.measure)} on the shelf get measured for the map too. all in, about ${secs > 5400 ? Math.round(secs / 3600) + ' h' : Math.max(1, Math.round(secs / 60)) + ' min'}. stop any time, it carries on next scan` : '';
+  const need = t.bytes + c.model;
+  const after = c.free - need;
+  $('#scanFree').textContent = (c.model ? `first scan also downloads the sound model for the map (${size(c.model)}) · ` : '') +
+    (c.free == null ? '' : `free on ${c.drive} ${size(c.free)}` + (need ? ` · ${after < 0 ? 'not enough room' : size(after) + ' after'}` : ''));
+  $('#scanFree').classList.toggle('low', c.free != null && need > 0 && after < 5e9);
   $('#scanGo').disabled = c.free != null && after < 0;
 }
 async function startScan(opts) {
+  $('#scan').textContent = 'starting…';
   const r = await window.shelf.scan(opts);
+  $('#scan').textContent = 'scan';
   if (!r.ok) { setStatus(r.why); return; }
   setScanning(true); setStatus('starting…');
   applySettings(await window.shelf.init());
@@ -983,9 +991,12 @@ $('#scanCancel').addEventListener('click', () => { $('#scanPop').hidden = true; 
 $('#scanPrune').addEventListener('click', async () => {
   const res = await window.shelf.prune();
   if (!res || !res.removed) return;
+  const gone = new Set(res.removed);
+  check.measure = state.all.filter((r) => !gone.has(r.id) && r.ana !== check.ana && r.wav && !r.error).length;
   dropLocal(res);
   check.oldBytes = 0;
   $('#scanOld').hidden = true;
+  checkSummary();
 });
 $('#emptyBtn').addEventListener('click', (e) => { e.stopPropagation(); renderFolders(); togglePop($('#foldersPop'), $('#foldersBtn')); });
 
@@ -1002,6 +1013,8 @@ window.shelf.on('scan:record', (rec) => {
 });
 window.shelf.on('scan:progress', (m) => {
   if (m.checking) { setStatus(`checking folders… ${n(m.stats.seen)} files`); return; }
+  if (m.model != null) { setStatus(`getting the sound model for the map (${size(MODEL_BYTES)})… ${m.model}%`); return; }
+  if (m.modelError) { setStatus(`couldn't get the sound model (${m.modelError}). scanning anyway, the map gets its sounds next scan`); return; }
   setStatus(statLine(m.stats) + '  ·  ' + (m.current || ''));
   const root = m.current ? rootMatcher()(m.current.toLowerCase()) : null;
   if (root !== state.scanRoot) { state.scanRoot = root; if (!$('#foldersPop').hidden) renderFolders(); }
@@ -1018,6 +1031,8 @@ window.shelf.on('scan:done', (m) => {
 
 // ---------- boot ----------
 (async () => {
+  // map.js loads after this file: wait for it
+  if (document.readyState === 'loading') await new Promise((r) => document.addEventListener('DOMContentLoaded', r));
   const init = await window.shelf.init();
   applySettings(init);
   state.prefs = { ...state.prefs, ...(init.prefs || {}) };

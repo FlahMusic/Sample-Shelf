@@ -35,17 +35,11 @@ const sound = (r) => r._sound;
 const colorOf = (r) => (r._kind === 'loop' ? COLORS.loop : COLORS[sound(r)] || COLORS.none);
 
 // ---------- features: z-scored so no one number decides closeness ----------
+// the sound model's numbers as they are, as typed arrays (z-scoring them made neighbours worse)
 function ensureZ() {
   if (!map.zDirty) return;
   map.zDirty = false;
-  const have = state.all.filter((r) => r.feat);
-  if (!have.length) return;
-  const D = have[0].feat.length;
-  const mean = new Float64Array(D), sd = new Float64Array(D);
-  for (const r of have) for (let j = 0; j < D; j++) mean[j] += r.feat[j] / have.length;
-  for (const r of have) for (let j = 0; j < D; j++) sd[j] += (r.feat[j] - mean[j]) ** 2 / have.length;
-  for (let j = 0; j < D; j++) sd[j] = Math.sqrt(sd[j]) || 1;
-  for (const r of have) { const z = new Float32Array(D); for (let j = 0; j < D; j++) z[j] = (r.feat[j] - mean[j]) / sd[j]; r._z = z; }
+  for (const r of state.all) if (r.feat) r._z = Float32Array.from(r.feat);
 }
 const zdist = (a, b) => { let s = 0; for (let k = 0; k < a.length; k++) { const d = a[k] - b[k]; s += d * d; } return s; };
 
@@ -259,7 +253,8 @@ function renderSide() {
     d.dataset.i = i;
     d.innerHTML = '<span class="dot"></span><span class="sname"></span><span class="sbpm"></span><span class="skey"></span>';
     d.children[0].style.background = colorOf(r);
-    d.children[1].textContent = (r.fav ? '★ ' : '') + r.name;
+    // names in a pack often start the same: cut from the left so the end shows
+    d.children[1].textContent = '\u200e' + (r.fav ? '★ ' : '') + r.name.replace(/\.[^.]+$/, '') + '\u200e';
     d.children[1].title = r.name + '\n' + r.folder;
     d.children[2].textContent = fmtBpmShown(r);
     d.children[3].textContent = fmtKeyShown(r);

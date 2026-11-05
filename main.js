@@ -3,8 +3,9 @@ const path = require('path');
 const fs = require('fs');
 const { Worker } = require('worker_threads');
 const K = require('./lib/keys');
-const { kindOf } = require('./lib/classify');
-const { VERSION: ANA } = require('./lib/features');
+const { kindOf, statedKind } = require('./lib/classify');
+const crypto = require('crypto');
+const { VERSION: ANA, MODEL } = require('./lib/clap');
 
 const DB_FILE = path.join(app.getPath('userData'), 'shelf.json');
 // hidden = scan folders that are unticked: their files stay on the shelf but don't show, and scans skip them
@@ -22,6 +23,9 @@ function load() {
   let first = Date.now();
   try { first = fs.statSync(DB_FILE).birthtimeMs || first; } catch {}
   for (const r of Object.values(db.files)) if (!r.added) r.added = first;
+  // numbers from an older way of measuring don't compare with new ones: those samples get measured again,
+  // and leave the map until then
+  for (const r of Object.values(db.files)) if (r.ana !== ANA && r.feat) { delete r.feat; delete r.mx; delete r.my; delete r.soundGuess; }
   rereadBpm(); // first: loop or one-shot depends on it, and folder keys only go to loops
   rereadKeys();
   // "._" macOS metadata files got onto older shelves as unreadable entries. scans skip them now
@@ -217,13 +221,48 @@ ipcMain.handle('scan-check', async () => {
   surveyor = null;
   if (res.type === 'fatal') return { ok: false, why: 'check broke: ' + res.error.split('\n')[0] };
   for (const g of res.groups) g.skipped = underSkip(g.path);
-  return { ok: true, ...res, free, drive: path.parse(lib).root, skip: db.skip };
+  // already on the shelf, not measured with the sound model yet: the scan does them after the folders
+  const measure = Object.values(db.files).filter((r) => r.ana !== ANA && r.wav && !r.error).length;
+  return { ok: true, ...res, free, drive: path.parse(lib).root, skip: db.skip, model: haveModel() ? 0 : MODEL.size, measure, ana: ANA };
 });
 ipcMain.handle('stop-check', () => { if (surveyor) { surveyor.terminate(); surveyor = null; } return true; });
+
+// the sound model for the map, downloaded once into the app's folder (not the library folder)
+const modelFile = () => path.join(app.getPath('userData'), 'models', MODEL.file);
+const haveModel = () => { try { return fs.statSync(modelFile()).size === MODEL.size; } catch { return false; } };
+let downloading = false;
+async function getModel() {
+  if (haveModel()) return true;
+  downloading = true;
+  const part = modelFile() + '.part';
+  try {
+    fs.mkdirSync(path.dirname(part), { recursive: true });
+    const res = await fetch(MODEL.url);
+    if (!res.ok) throw new Error('http ' + res.status);
+    const hash = crypto.createHash('sha256');
+    const out = fs.createWriteStream(part);
+    let got = 0, last = 0;
+    for await (const chunk of res.body) {
+      hash.update(chunk);
+      if (!out.write(chunk)) await new Promise((r) => out.once('drain', r));
+      got += chunk.length;
+      if (Date.now() - last > 300) { last = Date.now(); send('scan:progress', { model: Math.round((100 * got) / MODEL.size) }); }
+    }
+    await new Promise((r, j) => out.end((e) => (e ? j(e) : r())));
+    if (hash.digest('hex') !== MODEL.sha256) throw new Error('download came out wrong');
+    fs.renameSync(part, modelFile());
+    return true;
+  } catch (err) {
+    fs.rmSync(part, { force: true });
+    send('scan:progress', { modelError: String(err.message || err) });
+    return false;
+  } finally { downloading = false; }
+}
 
 // what the worker needs to know about the shelf: unchanged files get skipped, copies get reused
 // all = also files waiting to be detected again (they count as on the shelf, for the check)
 function knownFiles(all) {
+  const model = haveModel();
   const known = {};
   const hashList = [];
   for (const [id, r] of Object.entries(db.files)) {
@@ -232,7 +271,7 @@ function knownFiles(all) {
     known[id] = { path: r.path, size: r.size, mtime: r.mtime, error: r.error, wav: r.wav, qhash: r.qhash };
     // not measured for the map yet, or a detected tempo whose onsets weren't counted: the worker does
     // that after it's walked the folders
-    if ((r.ana !== ANA || (r.bpmSrc === 'auto' && r.onsets == null)) && !r.error && r.wav) {
+    if (((model && r.ana !== ANA) || (r.bpmSrc === 'auto' && r.onsets == null && statedKind(r) !== 'loop')) && !r.error && r.wav) {
       known[id].need = { wav: r.wav, name: r.name, folder: r.folder, ext: r.ext, duration: r.duration, bpm: r.bpm, bpmSrc: r.bpmSrc, acidOneShot: r.acidOneShot, kindUser: r.kindUser, keySrc: r.keySrc, ana: r.ana, onsets: r.onsets };
     }
   }
@@ -241,7 +280,7 @@ function knownFiles(all) {
 
 // skip / unskip = folders from the check you unticked / ticked
 ipcMain.handle('scan', async (_e, opts = {}) => {
-  if (worker) return { ok: false, why: 'already scanning' };
+  if (worker || downloading) return { ok: false, why: 'already scanning' };
   const roots = scanRoots();
   if (!roots.length) return { ok: false, why: db.roots.length ? 'tick a folder to scan' : 'pick a folder to scan first', needRoots: true };
   if (!db.libDir && !(await pickLib())) return { ok: false, why: 'no library folder' };
@@ -249,6 +288,8 @@ ipcMain.handle('scan', async (_e, opts = {}) => {
   const unskip = low(opts.unskip);
   db.skip = [...new Set([...db.skip.filter((x) => !unskip.includes(x.toLowerCase())), ...(opts.skip || [])])];
   save(true);
+  // no model (offline?): scan anyway, the map numbers come next scan
+  const model = (await getModel()) ? modelFile() : null;
   const { known, hashList } = knownFiles();
   worker = new Worker(path.join(__dirname, 'lib', 'worker.js'));
   worker.on('message', (m) => {
@@ -266,7 +307,7 @@ ipcMain.handle('scan', async (_e, opts = {}) => {
     }
   });
   worker.on('error', (err) => { send('scan:done', { type: 'fatal', error: String(err) }); worker = null; });
-  worker.postMessage({ type: 'scan', libDir: db.libDir, known, roots, hashList, skip: db.skip });
+  worker.postMessage({ type: 'scan', libDir: db.libDir, known, roots, hashList, skip: db.skip, model });
   return { ok: true };
 });
 
