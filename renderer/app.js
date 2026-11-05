@@ -926,10 +926,10 @@ async function toggleScan() {
     return;
   }
   check = c;
-  for (const g of c.groups) g.on = !g.skipped && !g.program && !g.long;
+  for (const g of c.groups) g.on = !g.skipped && !g.program && !g.factory && !g.long;
   const { bytes } = checkTotals();
   const tight = c.free != null && c.free - bytes - c.model < 5e9 && bytes + c.model > 0;
-  if (bytes < 50e6 && !c.model && c.measure < 500 && !tight && !c.groups.some((g) => !g.skipped && (g.program || g.long))) { startScan(); return; }
+  if (bytes < 50e6 && !c.model && c.measure < 500 && !tight && !c.groups.some((g) => !g.skipped && (g.program || g.factory || g.long))) { startScan(); return; }
   renderCheck();
   togglePop($('#scanPop'), $('#scan'));
   setStatus('');
@@ -948,9 +948,9 @@ function renderCheck() {
     const [box, text, count] = d.children;
     box.checked = g.on;
     text.firstChild.textContent = g.path === g.root ? folderName(g.root) + ' (loose files)' : folderName(g.path);
-    const why = g.program ? 'has program files' : g.long ? `long files, songs or mixes? (${Math.round(g.median / 60)} min each)` : g.skipped ? 'skipped before' : '';
+    const why = g.program ? 'has program files' : g.factory ? 'an instrument\'s samples or preset previews?' : g.long ? `long files, songs or mixes? (${Math.round(g.median / 60)} min each)` : g.skipped ? 'skipped before' : '';
     text.lastChild.innerHTML = why ? '<span class="why"></span>' : '';
-    if (why) text.lastChild.firstChild.textContent = why; else text.lastChild.textContent = '‎' + g.path + '‎';
+    if (why) text.lastChild.firstChild.textContent = '‎' + why + '‎'; else text.lastChild.textContent = '‎' + g.path + '‎';
     text.title = g.path;
     count.textContent = `${n(g.fresh)} new` + (g.copy ? ` · ${size(g.bytes)}` : ' · no copies');
     box.addEventListener('change', () => { g.on = box.checked; d.classList.toggle('off', !g.on); checkSummary(); });

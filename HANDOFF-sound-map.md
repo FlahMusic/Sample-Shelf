@@ -288,3 +288,9 @@ flah: "all yes (Q51–Q55). a one-shot is a blip, a loop is a phrase so it's lon
 - **½× / 2× (Q54):** next to lock bpm; halves/doubles the bpm of the selected loops (or the playing one), stored as set by you.
 - other: start.bat now runs npm install when any dependency folder is missing (it only did on a fresh copy, so new packages never arrived). "ClosedHat"/"OpenHat" names read as hats. a boot race (map.js not loaded yet) fixed. side list names cut from the left.
 - **not done / open:** Q32 (Studio Pro A/B of bass stretch) still open. 808 notes still untested. the sound guess for loops is weak (perc/snare/kick loops are rare in the test set).
+
+## round 6 (2026-11-05): 16-bit copies of lossy files, factory folders flagged
+flah: "q56 yes, q57 yes".
+- **Q56:** mp3/ogg/aac copies are written 16-bit (`pcmCodecFor`, was 24). the check estimates with the same rule: Sample Packs 4.81 gb estimated vs 4.79 exact (was 6.8 at 24-bit). null test on real files vs the decoded source: arturia .nksf.ogg previews -70 dB (24-bit -112); a loud dj-mix mp3 -64.6 dB at both 16 and 24, since its 208k samples past full scale clip either way (float wav would keep them at 2x the room; not done).
+- **Q57:** the check flags a folder (unticked) when half or more of its new files are an instrument's own samples (the same name at 3+ notes in one folder, digits ignored) or preset previews (`*.nksf.ogg` etc., or inside `.previews`). measured on his folders: serum multisample and arturia/autosampled instrument folders 0.67–1.00, sample packs, drum kits and serum's one-shot Samples 0–0.22. as the check groups them: Serum 2 Presets\Multisamples flagged, its Samples/Impulses/Tables not; every arturia instrument folder flagged (also program files); Sample Packs nothing.
+- not done: a tuned 808 pack named "808 C1 / D1 / E1" would be flagged too (tick it to scan).
