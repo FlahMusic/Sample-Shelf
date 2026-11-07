@@ -2,6 +2,11 @@
 const $ = (s) => document.querySelector(s);
 const ROW = 30;
 const PITCH_IDX = Object.fromEntries(Keys.PITCHES.map((p, i) => [p, i]));
+// sound colours: the list, the sound filter and the map all use these (bright, for the dark windows)
+const COLORS = { kick: '#ff5c8a', snare: '#ff9a4d', hat: '#4da3ff', perc: '#ffd24d', bass: '#a585ff', keys: '#3fe0d0', vocal: '#e07bff', fx: '#9fb3d9', loop: '#4dffa6', none: '#5a6f94' };
+const SOUND_NAMES = ['kick', 'snare', 'hat', 'perc', 'bass', 'keys', 'vocal', 'fx'];
+// names sort like people read them: "kick 2" before "kick 10"
+const natural = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 
 const state = {
   all: [],
@@ -16,8 +21,10 @@ const state = {
   scanning: false,
   settings: { roots: [], hidden: [], libDir: null },
   scanRoot: null, // folder the scan is in right now
-  prefs: { autoplay: true, sync: false, syncBpm: 120, lockKey: false, lockRoot: 'A', lockScale: 'minor', view: 'list', volume: 0.8 },
-  filt: { loop: true, oneshot: true, fav: false, keys: new Set(), bpmMin: null, bpmMax: null },
+  prefs: { autoplay: true, sync: false, syncBpm: 120, lockKey: false, lockRoot: 'A', lockScale: 'minor', view: 'list', volume: 0.8, even: false, tree: true },
+  filt: { loop: true, oneshot: true, fav: false, keys: new Set(), sounds: new Set(), bpmMin: null, bpmMax: null, dir: null },
+  treeOpen: new Set(),
+  treeSig: '',
 };
 
 // ---------- audio engine (signalsmith stretch) ----------
@@ -121,7 +128,7 @@ function startDeck(r, buf, keepPos, at) {
   g.cancelScheduledValues(0);
   g.setValueAtTime(0, ctx.currentTime);
   g.setValueAtTime(0, t0);
-  g.linearRampToValueAtTime(1, t0 + 0.004);
+  g.linearRampToValueAtTime(evenGain(buf), t0 + 0.004);
   live = { deck, src, buf, rec: r, t0, input0, rate, semis, dur: buf.duration, loop };
   if (!last || last.buf !== buf) last = { rec: r, buf, peaks: null };
   waveLoop();
@@ -211,6 +218,8 @@ function buildFilter() {
   // checkboxes: both on or both off = everything
   if (f.loop !== f.oneshot) { const want = f.loop ? 'loop' : 'oneshot'; tests.push((r) => r._kind === want); }
   if (f.fav) tests.push((r) => r.fav);
+  if (f.sounds.size) tests.push((r) => f.sounds.has(r._sound));
+  if (f.dir) tests.push((r) => r._pl.startsWith(f.dir));
   if (f.keys.size) tests.push((r) => r.key && (f.keys.has(keyId(r.key, r.scale)) || (!r.scale && [...f.keys].some((k) => k.startsWith(r.key + '|')))));
   if (f.bpmMin != null) tests.push((r) => r.bpm != null && r.bpm >= f.bpmMin);
   if (f.bpmMax != null) tests.push((r) => r.bpm != null && r.bpm <= f.bpmMax);
@@ -222,6 +231,7 @@ function buildFilter() {
       case 'len': case 'length': { const nt = numTest(t.val); fn = (r) => nt(r.duration); break; }
       case 'key': fn = keyTest(t.raw); break;
       case 'scale': { const s = Keys.normScale(t.val); fn = (r) => r.scale === s; break; }
+      case 'sound': fn = (r) => !!r._sound && r._sound.startsWith(t.val); break;
       case 'tag': fn = (r) => (r.tags || []).some((x) => x.toLowerCase().includes(t.val)); break;
       case 'ext': case 'type': fn = (r) => r.ext === t.val.replace(/^\./, ''); break;
       default: {
@@ -247,12 +257,13 @@ function prep(r) {
 function sortFn() {
   const { key, dir } = state.sort;
   const get = {
-    name: (r) => r.name.toLowerCase(),
+    name: (r) => r.name,
     bpm: (r) => r.bpm,
     key: (r) => (r.key ? PITCH_IDX[r.key] * 2 + (r.scale === 'minor' ? 1 : 0) : null),
     duration: (r) => r.duration,
     kind: (r) => r._kind,
-    folder: (r) => r.folder.toLowerCase(),
+    sound: (r) => r._sound,
+    folder: (r) => r.folder,
     added: (r) => r.added,
   }[key];
   return (a, b) => {
@@ -260,6 +271,7 @@ function sortFn() {
     if (x == null && y == null) return 0;
     if (x == null) return 1;
     if (y == null) return -1;
+    if (typeof x === 'string') return natural.compare(x, y) * dir;
     return (x < y ? -1 : x > y ? 1 : 0) * dir;
   };
 }
@@ -285,8 +297,9 @@ function refilter() {
   $('#spacer').style.height = state.view.length * ROW + 'px';
   $('#empty').hidden = state.all.length > 0;
   const fl = state.filt;
-  $('#clearFilters').hidden = !(fl.loop !== fl.oneshot || fl.fav || fl.keys.size || fl.bpmMin != null || fl.bpmMax != null);
+  $('#clearFilters').hidden = !(fl.loop !== fl.oneshot || fl.fav || fl.keys.size || fl.sounds.size || fl.bpmMin != null || fl.bpmMax != null);
   render();
+  renderTree();
   if (state.mode === 'map') mapRefilter();
   const v = state.view.length;
   // status strip: shown · on the shelf · hidden. same audio in two places is one sample
@@ -308,7 +321,7 @@ function rowEl(i) {
     el = document.createElement('div');
     el.className = 'row';
     el.draggable = true;
-    el.innerHTML = '<div class="play">▶</div><div class="name"></div><div class="num bpm"></div><div class="keyc"></div><div class="num len"></div><div class="kind"><span></span></div><div class="tags"></div><div class="folder"></div><div class="added"></div>';
+    el.innerHTML = '<div class="play">▶</div><div class="name"></div><div class="wave"><canvas></canvas></div><div class="num bpm"></div><div class="keyc"></div><div class="num len"></div><div class="kind"><span></span></div><div class="snd"><span><i></i><b></b></span></div><div class="tags"></div><div class="folder"></div><div class="added"></div>';
     list.appendChild(el);
     pool[i] = el;
   }
@@ -340,29 +353,208 @@ function render() {
     star.title = r.fav ? 'unfavourite (f)' : 'favourite (f)';
     c[1].replaceChildren(star, r.name);
     c[1].title = r.error ? `couldn't read: ${r.error}` : r._dupes ? `${r.name}\nsame file is in ${r._dupes} other place${r._dupes > 1 ? 's' : ''}, shown once` : r.name;
-    c[2].textContent = fmtBpmShown(r);
-    c[2].className = 'num bpm ' + (r.bpmSrc || '');
-    c[2].title = srcLabel(r.bpmSrc);
+    drawRowWave(c[2].firstChild, r, state.sel.has(r.id) || state.playingId === r.id);
+    c[3].textContent = fmtBpmShown(r);
+    c[3].className = 'num bpm ' + (r.bpmSrc || '');
+    c[3].title = srcLabel(r.bpmSrc);
     const x = xposeFor(r);
-    c[3].textContent = x && x.semis ? `${fmtKeyShown(r)} → ${fmtKey(x.to)} · ${fmtSemis(x.semis)}` : fmtKeyShown(r);
-    if (r._kind === 'oneshot' && r.key) { const l = document.createElement('span'); l.className = 'notelbl'; l.textContent = 'note'; c[3].append(' ', l); }
-    c[3].className = 'keyc ' + (r.keySrc || '') + (x && x.semis ? ' shifted' : '');
-    c[3].title = srcLabel(r.keySrc) + (x ? '\n' + x.why : '');
-    if (x && x.badge) { const b = document.createElement('span'); b.className = 'badge'; b.textContent = x.badge; c[3].append(c[3].textContent ? ' ' : '', b); }
-    c[4].textContent = fmtLen(r.duration);
-    c[5].firstChild.textContent = r._kind === 'loop' ? 'loop' : 'one-shot';
-    c[5].firstChild.className = r._kind;
-    c[5].className = 'kind' + (r.kindUser ? ' user' : '');
-    c[5].title = r.kindUser ? 'set by you' : '';
-    c[6].replaceChildren(...(r.tags || []).map((t) => { const s = document.createElement('span'); s.className = 'chip'; s.textContent = t; return s; }));
-    c[7].textContent = '‎' + r.folder + '‎';
-    c[7].title = r.folder;
-    c[8].textContent = fmtDate(r.added);
+    c[4].textContent = x && x.semis ? `${fmtKeyShown(r)} → ${fmtKey(x.to)} · ${fmtSemis(x.semis)}` : fmtKeyShown(r);
+    if (r._kind === 'oneshot' && r.key) { const l = document.createElement('span'); l.className = 'notelbl'; l.textContent = 'note'; c[4].append(' ', l); }
+    c[4].className = 'keyc ' + (r.keySrc || '') + (x && x.semis ? ' shifted' : '');
+    c[4].title = srcLabel(r.keySrc) + (x ? '\n' + x.why : '');
+    if (x && x.badge) { const b = document.createElement('span'); b.className = 'badge'; b.textContent = x.badge; c[4].append(c[4].textContent ? ' ' : '', b); }
+    c[5].textContent = fmtLen(r.duration);
+    c[6].firstChild.textContent = r._kind === 'loop' ? 'loop' : 'one-shot';
+    c[6].firstChild.className = r._kind;
+    c[6].className = 'kind' + (r.kindUser ? ' user' : '');
+    c[6].title = r.kindUser ? 'set by you' : '';
+    const snd = r._sound;
+    c[7].className = 'snd' + (snd && !r._soundWord ? ' auto' : '');
+    c[7].style.setProperty('--c', COLORS[snd] || COLORS.none);
+    c[7].firstChild.style.display = snd ? '' : 'none';
+    c[7].firstChild.lastChild.textContent = snd ? snd + (r._soundWord ? '' : '?') : '';
+    c[7].title = snd ? (r._soundWord ? 'from the name' : 'a guess from what it sounds like') : '';
+    c[8].replaceChildren(...(r.tags || []).map((t) => { const s = document.createElement('span'); s.className = 'chip'; s.textContent = t; return s; }));
+    c[9].textContent = '‎' + r.folder + '‎';
+    c[9].title = r.folder;
+    c[10].textContent = fmtDate(r.added);
   }
   for (let j = used; j < pool.length; j++) pool[j].style.display = 'none';
+  askPeaks();
 }
 list.addEventListener('scroll', () => requestAnimationFrame(render));
 window.addEventListener('resize', () => requestAnimationFrame(render));
+
+// ---------- row waveforms: worked out by main the first time a row shows, then kept ----------
+const pkWant = new Set();
+let pkTimer = 0;
+function askPeaks() {
+  for (let i = 0; i < pool.length; i++) {
+    if (pool[i].style.display === 'none') continue;
+    const r = state.view[+pool[i].dataset.i];
+    if (r && r.pk === undefined && !r._pkReq && r.wav && !r.error) { r._pkReq = true; pkWant.add(r.id); }
+  }
+  if (pkWant.size && !pkTimer) pkTimer = setTimeout(fetchPeaks, 60);
+}
+async function fetchPeaks() {
+  const ids = [...pkWant].slice(0, 40);
+  ids.forEach((id) => pkWant.delete(id));
+  try {
+    const got = await window.shelf.peaks(ids);
+    for (const id of ids) { const r = state.byId.get(id); if (r) r.pk = got[id] ?? null; }
+  } catch { /* no waveform for these */ }
+  pkTimer = 0;
+  if (state.mode === 'list') render();
+  if (pkWant.size) pkTimer = setTimeout(fetchPeaks, 0);
+}
+function drawRowWave(cv, r, lit) {
+  const sig = r.id + (lit ? '+' : '') + (r.pk ? 1 : 0);
+  const dpr = window.devicePixelRatio || 1;
+  const w = cv.clientWidth, h = cv.clientHeight;
+  if (!w) return;
+  if (cv._sig === sig && cv.width === Math.round(w * dpr)) return;
+  cv._sig = sig;
+  cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+  const g = cv.getContext('2d');
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, w, h);
+  if (!r.pk) { g.fillStyle = 'rgba(110,170,255,.18)'; g.fillRect(0, h / 2 - 0.5, w, 1); return; }
+  if (!r._pk) r._pk = Uint8Array.from(atob(r.pk), (ch) => ch.charCodeAt(0));
+  const bins = r._pk.length, bw = w / bins;
+  g.fillStyle = lit ? '#5ee0ff' : '#4a7fcf';
+  for (let b = 0; b < bins; b++) {
+    const a = Math.max(0.5, (r._pk[b] / 255) * (h / 2 - 1));
+    g.fillRect(b * bw, h / 2 - a, Math.max(1, bw - 0.6), a * 2);
+  }
+}
+
+// ---------- folder tree: one folder (and everything in it) at a time ----------
+const dirKey = (p) => p.toLowerCase().replace(/[\\/]+$/, '') + '\\';
+let tree = [];
+function buildTree() {
+  const match = rootMatcher();
+  const hid = hiddenTest();
+  const tops = new Map();
+  const node = (name, key, flag) => ({ name, key, kids: new Map(), ids: new Set(), direct: 0, ...flag });
+  for (const root of state.settings.roots) tops.set(dirKey(root), node(folderName(root), dirKey(root), { root: true }));
+  for (const r of state.all) {
+    if (hid && hid(r)) continue;
+    const root = match(r._pl);
+    // samples outside every scan folder (from an older scan) hang off their drive
+    const base = root ? root.replace(/[\\/]+$/, '') : r.folder.split(/[\\/]/)[0];
+    const k0 = dirKey(base);
+    let at = tops.get(k0);
+    if (!at) { at = node(base, k0, { other: true }); tops.set(k0, at); }
+    const sample = r.qhash || r.id;
+    at.ids.add(sample);
+    for (const part of r.folder.slice(base.length).split(/[\\/]/).filter(Boolean)) {
+      const k = at.key + part.toLowerCase() + '\\';
+      let kid = at.kids.get(k);
+      if (!kid) { kid = node(part, k); at.kids.set(k, kid); }
+      kid.ids.add(sample);
+      at = kid;
+    }
+    at.direct++;
+  }
+  // a folder holding nothing but one folder shows as one row: "Packs\Drums" instead of two levels
+  const done = (n) => {
+    let name = n.name, cur = n;
+    while (!cur.root && cur.kids.size === 1 && !cur.direct) { cur = [...cur.kids.values()][0]; name += '\\' + cur.name; }
+    return { name, key: cur.key, root: !!n.root, other: !!n.other, count: n.ids.size, kids: [...cur.kids.values()].map(done).sort((x, y) => natural.compare(x.name, y.name)) };
+  };
+  const all = [...tops.values()].filter((t) => t.root || t.ids.size);
+  tree = all.filter((t) => t.root).concat(all.filter((t) => !t.root).sort((x, y) => natural.compare(x.name, y.name))).map(done);
+  if (tree.length === 1 && !state.treeOpen.size) state.treeOpen.add(tree[0].key);
+}
+function renderTree() {
+  if (!state.prefs.tree) return;
+  const sig = state.all.length + '|' + state.settings.roots.join('|') + '|' + state.settings.hidden.join('|');
+  if (sig !== state.treeSig) { state.treeSig = sig; buildTree(); }
+  const out = [];
+  const walk = (node, depth) => {
+    const el = document.createElement('div');
+    el.className = 'tnode' + (node.root ? ' root' : '') + (state.filt.dir === node.key ? ' on' : '');
+    el.style.paddingLeft = 6 + depth * 12 + 'px';
+    el.dataset.k = node.key;
+    const open = state.treeOpen.has(node.key);
+    el.innerHTML = '<span class="tw"></span><span class="tn"></span><span class="tc"></span>';
+    el.children[0].textContent = node.kids.length ? (open ? '▼' : '▶') : '';
+    el.children[1].textContent = node.name;
+    el.children[2].textContent = n(node.count);
+    el.title = node.name;
+    out.push(el);
+    if (open) for (const k of node.kids) walk(k, depth + 1);
+  };
+  let other = false;
+  for (const t of tree) {
+    if (t.other && !other) { other = true; const h = document.createElement('div'); h.className = 'treesub'; h.textContent = 'outside your scan folders'; out.push(h); }
+    walk(t, 0);
+  }
+  if (!tree.length) { const el = document.createElement('div'); el.className = 'popsub'; el.style.padding = '4px 12px'; el.textContent = 'add a folder to browse it here'; out.push(el); }
+  $('#treeList').replaceChildren(...out);
+}
+const findNode = (k, nodes = tree) => { for (const t of nodes) { if (t.key === k) return t; const f = findNode(k, t.kids); if (f) return f; } return null; };
+$('#treeList').addEventListener('click', (e) => {
+  const el = e.target.closest('.tnode');
+  if (!el) return;
+  const k = el.dataset.k;
+  if (e.target.closest('.tw')) { state.treeOpen.has(k) ? state.treeOpen.delete(k) : state.treeOpen.add(k); renderTree(); return; }
+  const node = findNode(k);
+  state.filt.dir = state.filt.dir === k ? null : k;
+  if (state.filt.dir && node && node.kids.length) state.treeOpen.add(k);
+  list.scrollTop = 0;
+  refilter();
+});
+function showTree(on) {
+  state.prefs.tree = on;
+  document.body.classList.toggle('notree', !on);
+  $('#treeShow').hidden = on;
+  if (on) renderTree();
+  requestAnimationFrame(render);
+}
+// hiding the tree also lets go of its folder, so nothing stays filtered out of sight
+$('#treeHide').addEventListener('click', () => { showTree(false); savePrefs(); if (state.filt.dir) { state.filt.dir = null; refilter(); } });
+$('#treeShow').addEventListener('click', () => { showTree(true); savePrefs(); });
+
+// ---------- even volume: every sound at about the same loudness ----------
+// the loudest 50 ms of the sound goes to about -16 dBFS rms, never past full scale, at most 4x up or down
+const evenCache = new WeakMap();
+function evenGain(buf) {
+  if (!state.prefs.even) return 1;
+  let g = evenCache.get(buf);
+  if (g) return g;
+  const ch = [];
+  for (let c = 0; c < buf.numberOfChannels; c++) ch.push(buf.getChannelData(c));
+  const win = Math.max(1, Math.round(buf.sampleRate * 0.05));
+  let top = 0, peak = 0;
+  for (let s = 0; s < ch[0].length; s += win) {
+    let sum = 0;
+    const e = Math.min(ch[0].length, s + win);
+    for (let j = s; j < e; j++) for (const d of ch) { const v = d[j]; sum += v * v; const a = v < 0 ? -v : v; if (a > peak) peak = a; }
+    top = Math.max(top, sum / ((e - s) * ch.length));
+  }
+  const rms = Math.sqrt(top);
+  g = rms > 1e-5 ? Math.min(4, Math.max(0.25, 0.158 / rms), peak > 0 ? 0.98 / peak : 4) : 1;
+  evenCache.set(buf, g);
+  return g;
+}
+$('#even').addEventListener('change', (e) => {
+  state.prefs.even = e.target.checked;
+  savePrefs();
+  if (live) live.deck.gain.gain.setTargetAtTime(evenGain(live.buf), ctx.currentTime, 0.03);
+});
+
+// ---------- random: play one from what's shown ----------
+function playRandom() {
+  if (!state.view.length) return;
+  const i = Math.floor(Math.random() * state.view.length);
+  const r = state.view[i];
+  select(i);
+  if (state.mode === 'map') { map.anchor = r; map.step = -1; centerOn(r); relist(); }
+  else scrollTo(i);
+  play(r, { toggle: false });
+}
+$('#rnd').addEventListener('click', playRandom);
 
 // ---------- selection + playback ----------
 const rowIndex = (e) => { const el = e.target.closest('#list .row'); return el ? +el.dataset.i : -1; };
@@ -665,6 +857,39 @@ function syncKeys() {
 }
 $('#keyNone').addEventListener('click', () => { state.filt.keys.clear(); syncKeys(); refilter(); });
 
+// sound picker: kick, snare, hat... as many as you want. the map's legend picks the same ones
+const sgrid = $('#soundGrid');
+for (const snd of SOUND_NAMES) {
+  const b = document.createElement('button');
+  b.innerHTML = '<i></i><span></span>';
+  b.style.setProperty('--c', COLORS[snd]);
+  b.lastChild.textContent = snd;
+  b.dataset.s = snd;
+  b.addEventListener('click', () => toggleSound(snd));
+  sgrid.appendChild(b);
+}
+function toggleSound(snd) {
+  const f = state.filt.sounds;
+  f.has(snd) ? f.delete(snd) : f.add(snd);
+  syncSounds(); refilter();
+}
+function syncSounds() {
+  const f = state.filt.sounds;
+  sgrid.querySelectorAll('button').forEach((b) => b.classList.toggle('on', f.has(b.dataset.s)));
+  document.querySelectorAll('#legend span[data-s]').forEach((el) => el.classList.toggle('on', f.has(el.dataset.s)));
+  $('#soundChips').replaceChildren(...[...f].map((snd) => {
+    const c = document.createElement('span');
+    c.className = 'kchip';
+    c.innerHTML = '<i></i><span></span><b>×</b>';
+    c.style.setProperty('--c', COLORS[snd]);
+    c.children[1].textContent = snd;
+    c.addEventListener('click', () => toggleSound(snd));
+    return c;
+  }));
+}
+$('#soundNone').addEventListener('click', () => { state.filt.sounds.clear(); syncSounds(); refilter(); });
+$('#soundBtn').addEventListener('click', (e) => { e.stopPropagation(); togglePop($('#soundPop'), $('#soundBtn')); });
+
 function togglePop(pop, btn) {
   const open = pop.hidden;
   document.querySelectorAll('.pop').forEach((p) => { p.hidden = true; });
@@ -679,12 +904,14 @@ $('#keyBtn').addEventListener('click', (e) => { e.stopPropagation(); togglePop($
 $('#foldersBtn').addEventListener('click', (e) => { e.stopPropagation(); renderFolders(); togglePop($('#foldersPop'), $('#foldersBtn')); });
 $('#help').addEventListener('click', (e) => { e.stopPropagation(); togglePop($('#helpbox'), $('#help')); });
 document.addEventListener('mousedown', (e) => {
-  if (!e.target.closest('.pop') && !e.target.closest('#keyBtn, #foldersBtn, #help, #lockKeyBtn, #scan')) document.querySelectorAll('.pop').forEach((p) => { p.hidden = true; });
+  if (!e.target.closest('.pop') && !e.target.closest('#keyBtn, #soundBtn, #foldersBtn, #help, #lockKeyBtn, #scan')) document.querySelectorAll('.pop').forEach((p) => { p.hidden = true; });
 });
 
 $('#clearFilters').addEventListener('click', () => {
   Object.assign(state.filt, { loop: true, oneshot: true, fav: false, bpmMin: null, bpmMax: null });
   state.filt.keys.clear();
+  state.filt.sounds.clear();
+  syncSounds();
   $('#fLoop').checked = true; $('#fShot').checked = true; $('#fFav').checked = false; $('#bpmMin').value = ''; $('#bpmMax').value = '';
   syncKeys(); refilter();
 });
@@ -775,10 +1002,10 @@ function drawWave() {
   const cut = Math.floor(at * w);
   for (let x = 0; x < last.peaks.length; x++) {
     const a = Math.max(0.5, last.peaks[x] * k);
-    wg.fillStyle = x < cut ? '#9a72e8' : '#b9acd6';
+    wg.fillStyle = x < cut ? '#5ee0ff' : '#3a64a8';
     wg.fillRect(x, h / 2 - a, 1, a * 2);
   }
-  if (playing) { wg.fillStyle = '#463b66'; wg.fillRect(cut, 0, 1.5, h); }
+  if (playing) { wg.fillStyle = '#ffffff'; wg.fillRect(cut, 0, 1.5, h); }
 }
 function waveLoop() {
   cancelAnimationFrame(waveRaf);
@@ -885,6 +1112,7 @@ document.addEventListener('keydown', (e) => {
   else if (e.key.toLowerCase() === 't') { e.preventDefault(); openTagger(); }
   else if (e.key.toLowerCase() === 'f' && !e.ctrlKey) { e.preventDefault(); favSelected(); }
   else if (e.key === 'Delete') { e.preventDefault(); removeSelected(); }
+  else if (e.key.toLowerCase() === 'r' && !e.ctrlKey) { e.preventDefault(); playRandom(); }
   else if (e.key === '/' || (e.ctrlKey && e.key.toLowerCase() === 'f')) { e.preventDefault(); $('#q').focus(); }
   else if (e.ctrlKey && e.key.toLowerCase() === 'a') { e.preventDefault(); state.view.forEach((r) => state.sel.add(r.id)); render(); }
 });
@@ -1007,7 +1235,12 @@ let pending = null;
 window.shelf.on('scan:record', (rec) => {
   if (rec.feat) map.zDirty = true;
   const cur = state.byId.get(rec.id);
-  if (cur) { Object.assign(cur, rec); prep(cur); }
+  if (cur) {
+    const stale = cur.wav !== rec.wav || cur.mtime !== rec.mtime;
+    Object.assign(cur, rec);
+    if (stale) { cur.pk = undefined; cur._pk = null; cur._pkReq = false; }
+    prep(cur);
+  }
   else { prep(rec); state.all.push(rec); state.byId.set(rec.id, rec); }
   if (!pending) pending = setTimeout(() => { pending = null; refilter(); }, 700);
 });
@@ -1045,8 +1278,11 @@ window.shelf.on('scan:done', (m) => {
   for (const r of state.all) { prep(r); state.byId.set(r.id, r); }
   setScanning(init.scanning);
   $('#vol').value = state.prefs.volume;
+  $('#even').checked = state.prefs.even;
+  showTree(state.prefs.tree !== false);
   if (init.mapping) map.progress = 'laying out…';
   syncKeys();
+  syncSounds();
   refilter();
   setMode(state.prefs.view === 'map' ? 'map' : 'list');
 })();

@@ -42,6 +42,10 @@ _Avoid_: survey, estimate
 **Folder**:
 The folder a file sits in.
 
+**Tree**:
+The folders on the left. Picking one shows only what is in it and the folders inside it. Samples outside every scan folder hang off their drive.
+_Avoid_: browser, explorer
+
 **Library folder**:
 Where the app writes wav copies and locked copies.
 _Avoid_: output folder
@@ -62,6 +66,10 @@ A phrase meant to repeat in time, with a bpm. At least a bar long, so never unde
 **One-shot**:
 A single hit or note (or a held sound), played once.
 _Avoid_: hit, shot
+
+**Even volume**:
+Playing every sample at about the same loudness while previewing. It never changes the file or what gets dragged out.
+_Avoid_: normalise
 
 **Favourite**:
 A sample you starred.

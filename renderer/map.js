@@ -6,8 +6,6 @@
 const canvas = $('#map');
 const g2 = canvas.getContext('2d');
 const tip = $('#mapTip');
-const COLORS = { kick: '#f06aa8', snare: '#f0905e', hat: '#5f9cf0', perc: '#e0b52e', bass: '#6a4fd0', keys: '#2fb0c4', vocal: '#a77ef0', fx: '#9c90b8', loop: '#38c294', none: '#c3b8d8' };
-const SOUND_NAMES = ['kick', 'snare', 'hat', 'perc', 'bass', 'keys', 'vocal', 'fx'];
 
 const map = {
   view: { s: 1, ox: 0, oy: 0 },
@@ -29,6 +27,8 @@ $('#legend').replaceChildren(...[...SOUND_NAMES, 'loop'].map((s) => {
   const el = document.createElement('span');
   el.textContent = s === 'loop' ? 'loops' : s;
   el.style.setProperty('--c', COLORS[s]);
+  if (s === 'loop') el.className = 'loop';
+  else { el.dataset.s = s; el.title = 'show only ' + s + ' (click again to undo)'; el.addEventListener('click', () => toggleSound(s)); }
   return el;
 }));
 const sound = (r) => r._sound;
@@ -185,7 +185,7 @@ function paint() {
   const pa = a && at(a);
   // fits with: lines from the anchor
   if (pa && map.tab === 'fits') {
-    g2.strokeStyle = 'rgba(99,84,139,.35)';
+    g2.strokeStyle = 'rgba(94,224,255,.28)';
     g2.lineWidth = 1;
     g2.beginPath();
     for (const r of map.list) { const q = at(r); if (q) { g2.moveTo(pa.x, pa.y); g2.lineTo(q.x, q.y); } }
@@ -197,12 +197,12 @@ function paint() {
     if (!q) return;
     g2.fillStyle = colorOf(r);
     g2.beginPath(); g2.arc(q.x, q.y, rad + 1, 0, Math.PI * 2); g2.fill();
-    g2.strokeStyle = i < 8 ? 'rgba(70,59,102,.95)' : i < 16 ? 'rgba(70,59,102,.6)' : 'rgba(70,59,102,.3)';
+    g2.strokeStyle = i < 8 ? 'rgba(230,242,255,.95)' : i < 16 ? 'rgba(230,242,255,.55)' : 'rgba(230,242,255,.28)';
     g2.lineWidth = i < 8 ? 2 : 1.5;
     g2.beginPath(); g2.arc(q.x, q.y, rad + 4, 0, Math.PI * 2); g2.stroke();
   });
   // favourites: a gold ring
-  g2.strokeStyle = '#e0a82e'; g2.lineWidth = 2;
+  g2.strokeStyle = '#ffd25e'; g2.lineWidth = 2;
   g2.beginPath();
   for (const p of map.pts) {
     if (!p.r.fav) continue;
@@ -214,19 +214,19 @@ function paint() {
   for (const id of state.sel) {
     const r = state.byId.get(id); const q = r && at(r);
     if (!q) continue;
-    g2.strokeStyle = '#b388f0'; g2.lineWidth = 3;
+    g2.strokeStyle = '#5ee0ff'; g2.lineWidth = 3;
     g2.beginPath(); g2.arc(q.x, q.y, rad + 6, 0, Math.PI * 2); g2.stroke();
   }
   if (pa) {
     g2.fillStyle = colorOf(a);
     g2.beginPath(); g2.arc(pa.x, pa.y, rad + 4, 0, Math.PI * 2); g2.fill();
-    g2.strokeStyle = '#463b66'; g2.lineWidth = 2.5;
+    g2.strokeStyle = '#ffffff'; g2.lineWidth = 2.5;
     g2.beginPath(); g2.arc(pa.x, pa.y, rad + 9, 0, Math.PI * 2); g2.stroke();
   }
   const pr = state.playingId && state.byId.get(state.playingId);
   const pp = pr && at(pr);
-  if (pp) { g2.strokeStyle = '#463b66'; g2.lineWidth = 1.5; g2.setLineDash([3, 3]); g2.beginPath(); g2.arc(pp.x, pp.y, rad + 13, 0, Math.PI * 2); g2.stroke(); g2.setLineDash([]); }
-  if (map.hover) { const q = at(map.hover); if (q) { g2.strokeStyle = '#463b66'; g2.lineWidth = 1.5; g2.beginPath(); g2.arc(q.x, q.y, rad + 3, 0, Math.PI * 2); g2.stroke(); } }
+  if (pp) { g2.strokeStyle = '#5ee0ff'; g2.lineWidth = 1.5; g2.setLineDash([3, 3]); g2.beginPath(); g2.arc(pp.x, pp.y, rad + 13, 0, Math.PI * 2); g2.stroke(); g2.setLineDash([]); }
+  if (map.hover) { const q = at(map.hover); if (q) { g2.strokeStyle = '#e6f2ff'; g2.lineWidth = 1.5; g2.beginPath(); g2.arc(q.x, q.y, rad + 3, 0, Math.PI * 2); g2.stroke(); } }
 }
 
 // ---------- side panel ----------

@@ -8,7 +8,7 @@
 </head>
 <body>
 <header>
-  <div class="brand"><img src="art/slimelogo.png" alt="">sample shelf</div>
+  <div class="brand"><svg class="emblem" viewBox="0 0 32 32" width="26" height="26"><circle class="spin" cx="16" cy="16" r="13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-dasharray="58 6 10 6"/><circle cx="16" cy="16" r="8.5" fill="none" stroke="currentColor" stroke-width="1" opacity=".5"/><path d="M16 9.5l6.5 6.5-6.5 6.5-6.5-6.5z" fill="currentColor"/></svg><span>sample shelf</span></div>
   <div id="viewSeg" class="seg"><button data-v="list" class="on">list</button><button data-v="map">map</button></div>
   <div class="search">
     <svg viewBox="0 0 24 24" width="16" height="16"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2.2"/><path d="M20 20l-4-4" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
@@ -28,30 +28,26 @@
   <div id="keyChips" class="chips"></div>
   <button id="keyBtn" class="pill">+ key</button>
   <div class="sep"></div>
+  <span class="lbl">sound</span>
+  <div id="soundChips" class="chips"></div>
+  <button id="soundBtn" class="pill">+ sound</button>
+  <div class="sep"></div>
   <span class="lbl">bpm</span>
   <input id="bpmMin" class="numbox" type="number" min="20" max="400" placeholder="min">
   <span class="dash">–</span>
   <input id="bpmMax" class="numbox" type="number" min="20" max="400" placeholder="max">
   <button id="clearFilters" class="pill ghosty" hidden>clear filters</button>
-  <div class="grow"></div>
-  <label class="check"><input type="checkbox" id="autoplay"><span>auto-play</span></label>
-  <div id="lockBpm" class="lock">
-    <label class="check" title="loops play stretched to this tempo, pitch stays the same"><input type="checkbox" id="sync"><span>lock bpm</span></label>
-    <input id="syncBpm" class="numbox" type="number" min="20" max="400" value="120">
-    <span class="lbl">bpm</span>
-    <button id="halfBpm" class="pill ghosty" title="halve the bpm of the selected loops (fixes a tempo detected at double time)">½×</button>
-    <button id="dblBpm" class="pill ghosty" title="double the bpm of the selected loops (fixes a tempo detected at half time)">2×</button>
-  </div>
-  <div id="lockKeyBox" class="lock">
-    <label class="check" title="loops get moved to this key. minor loops to the key, major loops to its relative major. drums aren't touched"><input type="checkbox" id="lockKey"><span>lock key</span></label>
-    <button id="lockKeyBtn" class="pill">A min</button>
-  </div>
 </div>
 <div id="bar"><div></div></div>
 
 <div id="keyPop" class="pop" hidden>
   <div class="keygrid" id="keyGrid"></div>
   <div class="poprow"><button id="keyNone" class="pill ghosty">any key</button></div>
+</div>
+
+<div id="soundPop" class="pop" hidden>
+  <div class="soundgrid" id="soundGrid"></div>
+  <div class="poprow"><button id="soundNone" class="pill ghosty">any sound</button></div>
 </div>
 
 <div id="lockKeyPop" class="pop" hidden>
@@ -90,14 +86,15 @@
   <div class="poptitle">help</div>
   <div><code>kick</code> name, folder or tag has "kick"</div>
   <div><code>-vocal</code> leave out anything with "vocal"</div>
-  <div><code>bpm:120-128</code> <code>key:Am</code> <code>tag:dark</code> <code>ext:audioloop</code> <code>len:&lt;2</code></div>
+  <div><code>bpm:120-128</code> <code>key:Am</code> <code>sound:kick</code> <code>tag:dark</code> <code>ext:audioloop</code> <code>len:&lt;2</code></div>
   <div class="divider"></div>
   <div>click plays (if auto-play is on) · space plays / stops · enter plays from the top · esc stops · arrows, page up/down, home/end move</div>
   <div>click the waveform to play from there</div>
   <div>drag rows into studio pro · ctrl/shift-click picks more than one</div>
   <div>T tags selected · F stars them (favourites) · alt-click a tag removes it</div>
   <div>double-click bpm or key to fix it · right-click for loop/one-shot, remove</div>
-  <div>delete removes selected from the shelf</div>
+  <div>delete removes selected from the shelf · r plays a random one from what's shown</div>
+  <div>the tree on the left shows one folder and what's in it. click it again to show everything</div>
   <div class="divider"></div>
   <div>lock key: loops get transposed to that key (minor ones to it, major ones to its relative major). drums only get the tempo</div>
   <div>a key with a ? isn't in the file name (detected, or from the folder). it plays as is under the key lock. double-click it to confirm or fix it</div>
@@ -106,17 +103,25 @@
   <div class="divider"></div>
   <div>map: dots sit near sounds that sound alike. click one, then ↑↓ steps through what's similar (or what fits with it, by key and bpm). ←→ = back / forward. drag across dots to hear them. ctrl+drag a dot into studio pro. right-drag moves, wheel zooms, double-click empty space fits it back</div>
   <div class="divider"></div>
-  <div class="popsub">? = a guess · italic = detected · bold pink = set by you</div>
+  <div class="popsub">? = a guess · italic = detected · bold amber = set by you</div>
 </div>
 
+<div id="middle">
+<aside id="tree">
+  <div class="treehead"><span>browse</span><button id="treeHide" class="ghost" title="hide the folder tree">‹</button></div>
+  <div id="treeList"></div>
+</aside>
+<button id="treeShow" class="treeshow" title="show the folder tree" hidden>›</button>
 <main>
   <div class="row head" id="head">
     <div></div>
     <div data-sort="name">name</div>
+    <div class="wavec"></div>
     <div data-sort="bpm" class="num">bpm</div>
     <div data-sort="key">key</div>
     <div data-sort="duration" class="num">length</div>
     <div data-sort="kind">kind</div>
+    <div data-sort="sound">sound</div>
     <div>tags</div>
     <div data-sort="folder">folder</div>
     <div data-sort="added">added</div>
@@ -141,17 +146,35 @@
     </aside>
   </div>
   <div id="empty" hidden>
-    <img src="art/slime-violet.png" alt="">
+    <div class="radar"></div>
     <p id="emptyText">nothing on the shelf yet</p>
     <button class="btn primary" id="emptyBtn">pick folders to scan</button>
   </div>
 </main>
+</div>
 
 <div id="player">
   <button id="pp" class="ghost" title="play / stop (space)">▶</button>
   <div id="pinfo"><div id="pname"></div><div id="pmeta"></div></div>
   <canvas id="wave" title="click to play from there"></canvas>
   <label class="vol" title="volume"><span class="lbl">vol</span><input type="range" id="vol" min="0" max="1" step="0.01" value="0.8"></label>
+  <div id="transport">
+    <label class="check"><input type="checkbox" id="autoplay"><span>auto-play</span></label>
+    <button id="rnd" class="ghost" title="play a random one from what's shown (r)"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7h3c4 0 6 10 10 10h4M3 17h3c1.6 0 2.8-1.6 3.9-3.6M14 9.6C15 8 16 7 17 7h3M18 4l3 3-3 3M18 14l3 3-3 3"/></svg></button>
+    <label class="check" title="plays every sound at about the same loudness, so quiet ones don't get lost and loud ones don't blast"><input type="checkbox" id="even"><span>even volume</span></label>
+    <div class="sep"></div>
+    <div id="lockBpm" class="lock">
+      <label class="check" title="loops play stretched to this tempo, pitch stays the same"><input type="checkbox" id="sync"><span>lock bpm</span></label>
+      <input id="syncBpm" class="numbox" type="number" min="20" max="400" value="120">
+      <span class="lbl">bpm</span>
+      <button id="halfBpm" class="pill ghosty" title="halve the bpm of the selected loops (fixes a tempo detected at double time)">½×</button>
+      <button id="dblBpm" class="pill ghosty" title="double the bpm of the selected loops (fixes a tempo detected at half time)">2×</button>
+    </div>
+    <div id="lockKeyBox" class="lock">
+      <label class="check" title="loops get moved to this key. minor loops to the key, major loops to its relative major. drums aren't touched"><input type="checkbox" id="lockKey"><span>lock key</span></label>
+      <button id="lockKeyBtn" class="pill">A min</button>
+    </div>
+  </div>
 </div>
 
 <footer>

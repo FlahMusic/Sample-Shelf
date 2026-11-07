@@ -20,6 +20,7 @@ contextBridge.exposeInMainWorld('shelf', {
   contextMenu: call('context-menu'),
   readAudio: call('read-audio'),
   rebuildMap: call('rebuild-map'),
+  peaks: call('peaks'),
   drag: (files) => ipcRenderer.send('drag', files),
   reveal: (file) => ipcRenderer.send('reveal', file),
   on: (ch, fn) => ipcRenderer.on(ch, (_e, d) => fn(d)),

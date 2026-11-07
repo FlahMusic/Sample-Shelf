@@ -5,6 +5,7 @@ const { Worker } = require('worker_threads');
 const K = require('./lib/keys');
 const { kindOf, statedKind } = require('./lib/classify');
 const crypto = require('crypto');
+const { peaksOfFile } = require('./lib/peaks');
 const { VERSION: ANA, MODEL } = require('./lib/clap');
 
 const DB_FILE = path.join(app.getPath('userData'), 'shelf.json');
@@ -150,8 +151,11 @@ async function confirm(message, detail, okLabel) {
 function createWindow() {
   win = new BrowserWindow({
     width: 1320, height: 820, minWidth: 900, minHeight: 460,
-    backgroundColor: '#f1e9fb',
+    backgroundColor: '#050c1f',
     title: 'Sample Shelf',
+    // the header is the title bar: windows draws its buttons on top, in the header's colours
+    titleBarStyle: 'hidden',
+    titleBarOverlay: { color: '#081733', symbolColor: '#8fb6e0', height: 40 },
     autoHideMenuBar: true,
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, sandbox: true },
   });
@@ -336,6 +340,24 @@ function layout(rebuild) {
   return true;
 }
 ipcMain.handle('rebuild-map', () => layout(true));
+
+// row waveforms: worked out the first time a row shows, kept with the sample until its wav changes
+ipcMain.handle('peaks', async (_e, ids) => {
+  const out = {};
+  let changed = false;
+  for (const id of ids) {
+    const r = db.files[id];
+    if (!r || !r.wav) continue;
+    const tag = r.wav + ':' + r.mtime;
+    if (r.pk !== undefined && r.pkw === tag) { out[id] = r.pk; continue; }
+    try { r.pk = await peaksOfFile(r.wav); } catch { r.pk = null; }
+    r.pkw = tag;
+    changed = true;
+    out[id] = r.pk;
+  }
+  if (changed) save();
+  return out;
+});
 
 // patch = { addTags?, removeTag?, bpm?, key?, scale?, kindUser?, xposeUser?, fav? }. scale alone = set major/minor
 ipcMain.handle('update', (_e, ids, patch) => {
