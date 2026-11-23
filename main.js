@@ -11,7 +11,7 @@ const { VERSION: ANA, MODEL } = require('./lib/clap');
 const DB_FILE = path.join(app.getPath('userData'), 'shelf.json');
 // hidden = scan folders that are unticked: their files stay on the shelf but don't show, and scans skip them
 // skip = folders inside scan folders that you unticked before a scan: never scanned, nothing copied
-let db = { libDir: null, roots: [], hidden: [], skip: [], prefs: { autoplay: true, sync: false, syncBpm: 120 }, files: {} };
+let db = { libDir: null, roots: [], hidden: [], skip: [], prefs: { autoplay: true, sync: false, syncBpm: 120 }, setups: {}, files: {} };
 let win = null;
 let worker = null;
 let mapper = null; // map layout worker
@@ -117,6 +117,7 @@ function drop(ids) {
         if (fs.readdirSync(dir).length === 0) fs.rmdirSync(dir);
       } catch {}
     }
+    try { fs.rmSync(path.join(procDir(), hashOf(id)), { recursive: true, force: true }); } catch {}
     delete db.files[id];
   }
   save(true);
@@ -153,18 +154,20 @@ function createWindow() {
     width: 1320, height: 820, minWidth: 900, minHeight: 460,
     backgroundColor: '#050c1f',
     title: 'Sample Shelf',
-    // the header is the title bar: windows draws its buttons on top, in the header's colours
-    titleBarStyle: 'hidden',
-    titleBarOverlay: { color: '#081733', symbolColor: '#8fb6e0', height: 40 },
+    // the header is the title bar. windows draws its buttons on top at the right, in the header's colours;
+    // a mac keeps its three buttons at the left, inside the header
+    ...(process.platform === 'darwin'
+      ? { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 14, y: 16 } }
+      : { titleBarStyle: 'hidden', titleBarOverlay: { color: '#081733', symbolColor: '#8fb6e0', height: 40 } }),
     autoHideMenuBar: true,
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, sandbox: true },
   });
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
 }
 
-const settings = () => ({ libDir: db.libDir, roots: db.roots, hidden: db.hidden, prefs: db.prefs });
+const settings = () => ({ libDir: db.libDir, roots: db.roots, hidden: db.hidden, prefs: db.prefs, setups: db.setups });
 
-ipcMain.handle('init', () => ({ ...settings(), records: Object.values(db.files), scanning: !!worker, mapping: !!mapper }));
+ipcMain.handle('init', () => ({ ...settings(), records: Object.values(db.files), scanning: !!worker, mapping: !!(mapper || setupMapper) }));
 ipcMain.handle('pick-lib', () => pickLib());
 ipcMain.handle('set-prefs', (_e, prefs) => { db.prefs = { ...db.prefs, ...prefs }; save(); return db.prefs; });
 
@@ -320,25 +323,61 @@ ipcMain.handle('stop-scan', async () => {
   return true;
 });
 
-// map positions. rebuild = lay everything out again; otherwise only samples without a spot get one
+// map positions. rebuild = lay everything out again; otherwise only samples without a spot get one.
+// the worker also measures high / low (rec.br) for samples that don't have it yet
+const slim = (r, pos) => ({ id: r.id, feat: r.feat, wav: r.wav, br: r.br, mx: pos ? pos[0] : null, my: pos ? pos[1] : null, name: r.name, folder: r.folder, ext: r.ext, duration: r.duration, bpm: r.bpm, bpmSrc: r.bpmSrc, acidOneShot: r.acidOneShot, kindUser: r.kindUser });
+function runLayout(items, rebuild, guess, done) {
+  const w = new Worker(path.join(__dirname, 'lib', 'layout.js'), { workerData: { items, rebuild, guess } });
+  w.on('message', (m) => {
+    if (m.type === 'progress') { send('map:progress', m); return; }
+    for (const [id, v] of Object.entries(m.br)) if (db.files[id]) db.files[id].br = v;
+    if (m.type === 'br') { save(false); send('map:br', m.br); return; }
+    done(m);
+  });
+  w.on('error', (err) => send('map:progress', { what: 'map broke: ' + String(err.message || err) }));
+  return w;
+}
 function layout(rebuild) {
   if (mapper) return false;
   const items = Object.values(db.files).filter((r) => r.feat && !r.error);
-  if (!items.length || (!rebuild && items.every((r) => r.mx != null))) return false;
-  const slim = items.map((r) => ({ id: r.id, feat: r.feat, mx: rebuild ? null : r.mx, my: r.my, name: r.name, folder: r.folder, ext: r.ext, duration: r.duration, bpm: r.bpm, bpmSrc: r.bpmSrc, acidOneShot: r.acidOneShot, kindUser: r.kindUser }));
-  mapper = new Worker(path.join(__dirname, 'lib', 'layout.js'), { workerData: { items: slim, rebuild } });
-  mapper.on('message', (m) => {
-    if (m.type === 'progress') { send('map:progress', m); return; }
+  if (!items.length || (!rebuild && items.every((r) => r.mx != null && r.br !== undefined))) return false;
+  mapper = runLayout(items.map((r) => slim(r, rebuild || r.mx == null ? null : [r.mx, r.my])), rebuild, true, (m) => {
     for (const [id, [x, y]] of Object.entries(m.pos)) { const r = db.files[id]; if (r) { r.mx = x; r.my = y; } }
     for (const r of Object.values(db.files)) { if (m.sound[r.id]) r.soundGuess = m.sound[r.id]; else delete r.soundGuess; }
     save(true);
-    send('map:done', { pos: m.pos, sound: m.sound });
+    send('map:done', { pos: m.pos, sound: m.sound, br: m.br });
   });
-  const end = () => { mapper = null; };
-  mapper.on('error', (err) => { end(); send('map:progress', { what: 'map broke: ' + String(err.message || err) }); });
-  mapper.on('exit', end);
+  mapper.on('exit', () => { mapper = null; });
   return true;
 }
+
+// setups: saved folders, filters, search, bpm sync / key lock, and their own map (laid out over just their
+// samples, so a few packs fill the whole map)
+let setupMapper = null;
+ipcMain.handle('setup-save', (_e, setup) => {
+  const old = db.setups[setup.name];
+  db.setups[setup.name] = { ...setup, pos: old && old.pos ? old.pos : null };
+  save(true);
+  return db.setups;
+});
+ipcMain.handle('setup-delete', (_e, name) => { delete db.setups[name]; save(true); return db.setups; });
+// ids = the samples in the setup's folders. keeps spots it has, places new samples next to their neighbours
+ipcMain.handle('setup-layout', (_e, name, ids, rebuild) => {
+  const st = db.setups[name];
+  if (!st || setupMapper) return false;
+  const pos = (!rebuild && st.pos) || {};
+  const items = ids.map((id) => db.files[id]).filter((r) => r && r.feat && !r.error);
+  if (!items.length) { st.pos = {}; save(true); send('map:done', { setup: name, pos: {}, br: {} }); return true; }
+  if (!rebuild && items.every((r) => pos[r.id] && r.br !== undefined)) return false;
+  setupMapper = runLayout(items.map((r) => slim(r, pos[r.id])), rebuild, false, (m) => {
+    st.pos = m.pos;
+    save(true);
+    send('map:done', { setup: name, pos: m.pos, br: m.br });
+  });
+  setupMapper.on('exit', () => { setupMapper = null; });
+  return true;
+});
+
 ipcMain.handle('rebuild-map', () => layout(true));
 
 // row waveforms: worked out the first time a row shows, kept with the sample until its wav changes
@@ -429,13 +468,46 @@ ipcMain.handle('context-menu', (_e, info) => new Promise((resolve) => {
 }));
 
 const dragIcon = nativeImage.createFromPath(path.join(__dirname, 'renderer', 'drag.png'));
-ipcMain.on('drag', (e, files) => {
+// items: file paths, or processed renders to write first ({ id, sig, label, rate, chans })
+ipcMain.on('drag', (e, items) => {
+  const files = items.map((f) => { if (typeof f === 'string') return f; try { return writeProcessed(f); } catch { return null; } });
   const ok = files.filter((f) => f && fs.existsSync(f));
   if (!ok.length) return;
   e.sender.startDrag({ file: ok[0], files: ok, icon: dragIcon });
 });
 
 ipcMain.on('reveal', (_e, file) => shell.showItemInFolder(file));
+
+// processed copies: a loop rendered in the bpm sync / key lock settings, for "drag processed".
+// 32-bit float (the stretcher can go a little past full scale). <library>/_processed/<sample>/<settings>/<name> [E min 128bpm].wav
+const procDir = () => path.join(db.libDir || app.getPath('userData'), '_processed');
+const hashOf = (s) => crypto.createHash('md5').update(s).digest('hex').slice(0, 10);
+const procFile = (id, sig, label) => {
+  const r = db.files[id];
+  if (!r) throw new Error('not on the shelf');
+  const name = r.name.replace(/\.[^.]+$/, '') + ` [${label.replace(/[^\w #.-]/g, '')}].wav`;
+  return path.join(procDir(), hashOf(id), hashOf(sig), name);
+};
+ipcMain.handle('processed-path', (_e, id, sig, label) => { const f = procFile(id, sig, label); return fs.existsSync(f) ? f : null; });
+// written when it's dragged (a few ms for a loop), reused after that
+function writeProcessed({ id, sig, label, rate, chans }) {
+  const f = procFile(id, sig, label);
+  if (fs.existsSync(f)) return f;
+  const ch = chans.length, frames = chans[0].length;
+  const head = Buffer.alloc(58);
+  head.write('RIFF', 0); head.writeUInt32LE(50 + frames * ch * 4, 4); head.write('WAVE', 8);
+  head.write('fmt ', 12); head.writeUInt32LE(18, 16);
+  head.writeUInt16LE(3, 20); head.writeUInt16LE(ch, 22); head.writeUInt32LE(rate, 24);
+  head.writeUInt32LE(rate * ch * 4, 28); head.writeUInt16LE(ch * 4, 32); head.writeUInt16LE(32, 34); head.writeUInt16LE(0, 36);
+  head.write('fact', 38); head.writeUInt32LE(4, 42); head.writeUInt32LE(frames, 46);
+  head.write('data', 50); head.writeUInt32LE(frames * ch * 4, 54);
+  const data = new Float32Array(frames * ch);
+  for (let i = 0; i < frames; i++) for (let c = 0; c < ch; c++) data[i * ch + c] = chans[c][i];
+  fs.mkdirSync(path.dirname(f), { recursive: true });
+  fs.writeFileSync(f + '.tmp', Buffer.concat([head, Buffer.from(data.buffer)]));
+  fs.renameSync(f + '.tmp', f);
+  return f;
+}
 
 // preview bytes for the audio engine. only wavs that are on the shelf
 ipcMain.handle('read-audio', (_e, file) => {
@@ -445,4 +517,4 @@ ipcMain.handle('read-audio', (_e, file) => {
 
 app.whenReady().then(() => { load(); createWindow(); win.webContents.once('did-finish-load', () => layout(false)); });
 app.on('window-all-closed', () => app.quit());
-app.on('before-quit', () => { if (worker) worker.terminate(); if (mapper) mapper.terminate(); save(true); });
+app.on('before-quit', () => { if (worker) worker.terminate(); if (mapper) mapper.terminate(); if (setupMapper) setupMapper.terminate(); save(true); });

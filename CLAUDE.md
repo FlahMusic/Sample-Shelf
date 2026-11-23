@@ -1,30 +1,11 @@
-# sample shelf
+# sample shelf (mac copy)
 
-electron app (windows 11) that scans flah's sample folders, converts everything to wav, sorts by bpm/key/type, previews, and drags wavs into his daw (fender studio pro 8, formerly studio one).
+this folder is the mac copy of `../sample shelf`. **don't edit the app here.** change it in the windows folder (read its CLAUDE.md), keep the code working on both, then run `node sync-mac.js` there. that copies everything over except the windows-only files.
 
-current task: read `HANDOFF-sound-map.md` first. it has the plan, the open questions for flah, and what's verified vs not.
+files that only live here, and the sync never touches:
+- `start.command`: mac launcher (npm install, electron download, start)
+- `MAC.md`: first-run steps for whoever tests it
+- `CLAUDE.md`: this file
+- `.gitattributes`: keeps start.command's line endings mac-style
 
-## how flah wants you to work
-- ask before assuming intent, architecture or requirements. ask the "ask flah" questions in the handoff before building those parts.
-- simplest thing that works first. no unrequested abstractions or options.
-- don't touch code unrelated to the current task.
-- flag uncertainty out loud. check sources, never guess.
-- running isn't working: test that it's actually usable on this pc with real samples (playable, findable, drags into studio pro).
-- never change a design just to make a test pass. fix the thing, then the test.
-- ui copy: short, plain, lowercase, no flavour text, no ai words.
-- don't describe this app as a version of or successor to any other product.
-- end every pass with a plain list: files to upload to github / files to delete.
-- talk to him casual and short.
-
-## run
-- `start.bat` (npm install on first run, then downloads electron.exe — electron 44 doesn't fetch it during npm install)
-- dev: `npm start`
-- db: `%APPDATA%\sample-shelf\shelf.json`
-
-## layout
-- `main.js`: window, db, ipc, cleanup, drag (`webContents.startDrag`)
-- `preload.js`: `window.shelf` api
-- `lib/worker.js`: scan / convert (ffmpeg-static) / tags / detect (essentia.js)
-- `lib/keys.js`, `lib/classify.js`: shared helpers (node + window)
-- `renderer/`: ui
-- `docs/`: map visual target + sound-map prototype
+the mac build has never been run (flah has no mac; a friend tests it).
