@@ -16,6 +16,12 @@ current task: read `HANDOFF-sound-map.md` first. it has the plan, the open quest
 - end every pass with a plain list: files to upload to github / files to delete.
 - talk to him casual and short.
 
+## mac copy
+- `../sample shelf mac` is the mac version. edit only here; keep code working on both (`process.platform` in main, `MAC` / `SEP` / `addKey` in renderer/app.js), then run `node sync-mac.js` at the end of every pass. always, without being asked (flah's standing rule).
+- mac-only files live only there (`start.command`, `MAC.md`, its own `CLAUDE.md`, `.gitattributes`); windows-only ones stay here (`start.bat`, `sync-mac.js`, this file).
+- nobody has run the mac build yet. flah has no mac, a friend tests it. flag anything mac-specific as untested.
+- the end-of-pass list covers both folders.
+
 ## run
 - `start.bat` (npm install on first run, then downloads electron.exe — electron 44 doesn't fetch it during npm install)
 - dev: `npm start`
