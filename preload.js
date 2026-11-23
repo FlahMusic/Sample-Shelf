@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 const call = (ch) => (...a) => ipcRenderer.invoke(ch, ...a);
 
 contextBridge.exposeInMainWorld('shelf', {
+  platform: process.platform,
   init: call('init'),
   pickLib: call('pick-lib'),
   setPrefs: call('set-prefs'),
@@ -20,7 +21,11 @@ contextBridge.exposeInMainWorld('shelf', {
   contextMenu: call('context-menu'),
   readAudio: call('read-audio'),
   rebuildMap: call('rebuild-map'),
+  setupSave: call('setup-save'),
+  setupDelete: call('setup-delete'),
+  setupLayout: call('setup-layout'),
   peaks: call('peaks'),
+  processedPath: call('processed-path'),
   drag: (files) => ipcRenderer.send('drag', files),
   reveal: (file) => ipcRenderer.send('reveal', file),
   on: (ch, fn) => ipcRenderer.on(ch, (_e, d) => fn(d)),
